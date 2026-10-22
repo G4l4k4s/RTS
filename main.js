@@ -1,62 +1,30 @@
-// 1. Buscar el canvas por su id
+// 1. Canvas y pincel
 const canvas = document.getElementById("game");
-
-// 2. Obtener el pincel 2D
 const ctx = canvas.getContext("2d");
 
-// // 3. Elegir el color del pincel
-// ctx.fillStyle = "#3b82f6"; // Azul
-// // 4. Dibujar un rectángulo relleno
-// ctx.fillRect(380, 280, 40, 40);
+// 2. Configuración del mundo
+const world = { width: 1600, height: 1200 };
+const camera = { x: 200, y: 150 };
 
-// // 5. Escribir un mensaje en la consola
-// console.log("Juego iniciado");
-
-let x = 380;
-let y = 280;
-let vy = -300; // velocidad vertical
-let vx = -300; // píxeles por segundo
+// 3. Tiempo
 let lastTime = performance.now();
 
+// 4. Actualizar el estado
 function update(dt) {
-  // Mover el cuadrado
-  x += vx * dt;
-  y += vy * dt;
-
-  // Rebote en el borde derecho
-  if (x + 40 >= canvas.width) {
-    x = canvas.width - 40;
-    vx = -300;
-  }
-
-  // Rebote en el borde izquierdo
-  if (x <= 0) {
-    x = 0;
-    vx = 300;
-  }
-
-  // Rebote en el borde inferior
-  if (y + 40 >= canvas.height) {
-    y = canvas.height - 40;
-    vy = -300;
-  }
-
-  // Rebote en el borde superior
-  if (y <= 0) {
-    y = 0;
-    vy = 300;
-  }
+  // Aquí moveremos la cámara más adelante
 }
 
+// 5. Dibujar
 function render() {
   // Borrar el frame anterior
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Dibujar el cuadrado en su nueva posición
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillRect(x, y, 40, 40);
+  // Fondo del mundo
+  ctx.fillStyle = "#24382a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
+// 6. Bucle del juego
 function gameLoop(now) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
