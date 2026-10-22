@@ -25,10 +25,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {           // Cuando se suelta una tecla, marcarla como no presionada
   keys[event.key.toLowerCase()] = false;                // Marcar la tecla como no presionada
 });                                                     // 2.2. Manejo de eventos de redimensionamiento
-window.addEventListener("resize", () => {              // Cuando se redimensiona la ventana, actualizar el tamaño del canvas
-  canvas.width = window.innerWidth;                     // Establecer el ancho del canvas al ancho de la ventana
-  canvas.height = window.innerHeight;                   // Establecer el alto del canvas al alto de la ventana
-});
+
 
 // 3. Tiempo
 let lastTime = performance.now();             // Última vez que se actualizó el juego
@@ -53,21 +50,15 @@ function update(dt) {
 function render() {
 
   // Borrar el frame anterior
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+  ctx.clearRect(0, 0, canvas.width, canvas.height);   // Limpiar el canvas antes de dibujar el siguiente frame
 
   // Fondo del mundo
-  ctx.fillStyle = "#24382a";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#24382a";                       // Color de fondo del mundo
+  ctx.fillRect(0, 0, canvas.width, canvas.height);   // Dibujar el fondo del mundo en el canvas 
 
   // Cuadrícula del mundo
-  ctx.strokeStyle = "#3a5a42";
-  ctx.lineWidth = 1;
-
-  // Información de la cámara
-  ctx.fillStyle = "#e8e8e8";
-  ctx.font = "16px system-ui";
-  ctx.fillText(`Cámara: ${Math.round(camera.x)}, ${Math.round(camera.y)}`, 16, 24);  // Mostrar la posición de la cámara en la esquina superior izquierda
+  ctx.strokeStyle = "#3a5a42";                     // Color de las líneas de la cuadrícula
+  ctx.lineWidth = 1;                                 // Ancho de las líneas de la cuadrícula
 
   for (let x = 0; x <= world.width; x += TILE_SIZE) {
     const screenX = x - camera.x;
@@ -84,6 +75,12 @@ function render() {
     ctx.lineTo(canvas.width, screenY);
     ctx.stroke();
   }
+
+  // Información de la cámara
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "16px system-ui";
+  ctx.fillText(`Cámara: ${Math.round(camera.x)}, ${Math.round(camera.y)}`, 16, 24);  // Mostrar la posición de la cámara en la esquina superior izquierda
+
 
   // Unidad
   ctx.fillStyle = "#3b82f6";
