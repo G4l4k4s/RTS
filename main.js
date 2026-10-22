@@ -1,14 +1,23 @@
 // 1. Canvas y pincel
-const canvas = document.getElementById("game");  // Obtener el elemento canvas del DOM
-const ctx = canvas.getContext("2d");             // Obtener el contexto 2D para dibujar en el canvas
+const canvas = document.getElementById("game");   // Obtener el elemento canvas del DOM
+const ctx = canvas.getContext("2d");              // Obtener el contexto 2D para dibujar en el canvas  
 
 // 2. Configuración del mundo
-const world = { width: 1600, height: 1200 };  // Tamaño del mundo en píxeles
-const camera = { x: 200, y: 150 };            // Posición de la cámara en el mundo
-const TILE_SIZE = 100;                        // Tamaño de cada celda de la cuadrícula en píxeles      
-const unit = { x: 600, y: 400, size: 40 };    // Unidad en el mundo
-const tree = { x: 900, y: 500, size: 60 };    // Árbol en el mundo
-const CAMERA_SPEED = 400;                     // píxeles por segundo
+const camera = { x: 200, y: 150 };                // Posición de la cámara en el mundo
+const TILE_SIZE = 100;                            // Tamaño de cada celda de la cuadrícula en píxeles      
+const world = { width: 1600, height: 1200 };      // Tamaño del mundo en píxeles
+
+const units = [                                   // Unidades en el mundo  
+  { x: 600, y: 400, size: 40, selected: false },  // Unidad 1
+  { x: 660, y: 400, size: 40, selected: false },  // Unidad 2
+  { x: 720, y: 400, size: 40, selected: false },  // Unidad 3
+  { x: 600, y: 460, size: 40, selected: false },  // Unidad 4
+  { x: 660, y: 460, size: 40, selected: false },  // Unidad 5
+  { x: 720, y: 460, size: 40, selected: false },  // Unidad 6
+];
+
+const tree = { x: 900, y: 500, size: 60 };        // Árbol en el mundo
+const CAMERA_SPEED = 400;                         // píxeles por segundo
 const keys = {};
 
 
@@ -24,7 +33,37 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {           // Cuando se suelta una tecla, marcarla como no presionada
   keys[event.key.toLowerCase()] = false;                // Marcar la tecla como no presionada
-});                                                     // 2.2. Manejo de eventos de redimensionamiento
+});
+
+canvas.addEventListener("click", (event) => {
+  // 1. Posición del clic dentro del canvas
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = event.clientX - rect.left;
+  const mouseY = event.clientY - rect.top;
+
+  // 2. Convertir a coordenadas del mundo
+  const worldX = mouseX + camera.x;
+  const worldY = mouseY + camera.y;
+
+  // 3. Deseleccionar todas
+  for (const unit of units) {
+    unit.selected = false;
+  }
+
+  // 4. Seleccionar la unidad bajo el cursor
+  for (const unit of units) {
+    const inside =
+      worldX >= unit.x &&
+      worldX <= unit.x + unit.size &&
+      worldY >= unit.y &&
+      worldY <= unit.y + unit.size;
+
+    if (inside) {
+      unit.selected = true;
+      break;
+    }
+  }
+});
 
 
 // 3. Tiempo
@@ -76,21 +115,37 @@ function render() {
     ctx.stroke();
   }
 
-  // Información de la cámara
-  ctx.fillStyle = "#e8e8e8";
-  ctx.font = "16px system-ui";
-  ctx.fillText(`Cámara: ${Math.round(camera.x)}, ${Math.round(camera.y)}`, 16, 24);  // Mostrar la posición de la cámara en la esquina superior izquierda
-
-
-  // Unidad
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillRect(unit.x - camera.x, unit.y - camera.y, unit.size, unit.size);
+  // Unidades
+  for (const unit of units) {
+    ctx.fillStyle = unit.selected ? "#fbbf24" : "#3b82f6";
+    ctx.fillRect(unit.x - camera.x, unit.y - camera.y, unit.size, unit.size);
+    if (unit.selected) {
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(unit.x - camera.x, unit.y - camera.y, unit.size, unit.size);
+    }
+  }
 
   // Árbol
   ctx.fillStyle = "#8b5a2b";
   ctx.fillRect(tree.x - camera.x, tree.y - camera.y, tree.size, tree.size);
 
+  
+  // Interfaz
+  let selectedCount = 0;
+  for (const unit of units) {
+    if (unit.selected) {
+      selectedCount++;
+    }
+  }
 
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "16px system-ui";
+  ctx.fillText(
+    `Cámara: ${Math.round(camera.x)}, ${Math.round(camera.y)} · Seleccionadas: ${selectedCount}`,
+    16,
+    24
+  );
 
 }
 
