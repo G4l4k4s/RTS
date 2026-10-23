@@ -18,4 +18,17 @@ canvas {
     margin: 0 auto;
     background-color: #24382a;
     border: 4px solid #4a6b52;
+    cursor: crosshair;
+    user-select: none;
+}
+
+.hint {
+    margin-top: 14px;
+    color: #8a94a6;
+    font-size: 14px;
+}
+
+.hint b {
+    color: #c7ced9;
+    font-weight: 600;
 }
