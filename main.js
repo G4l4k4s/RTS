@@ -480,11 +480,47 @@ function buildRoute(unit, target) {
 
   // Las esquinas son para el centro de la unidad; se pasan a su esquina
   // superior izquierda. El destino se deja tal cual.
-  return route.map((point) =>
+  const waypoints = route.map((point) =>
     point === end
       ? target
       : clampDestination(unit, point.x - unit.size / 2, point.y - unit.size / 2)
   );
+
+  // Quitar esquinas intermedias que no hacen falta: si desde el punto actual
+  // se ve el siguiente, no hay que pasar por la de en medio.
+  return smoothRoute(unit, waypoints, blocked);
+}
+
+// Suaviza una ruta saltándose paradas que se pueden ver en línea recta.
+function smoothRoute(unit, path, blocked) {
+  const result = [];
+  let fromX = unit.x + unit.size / 2;
+  let fromY = unit.y + unit.size / 2;
+
+  for (let i = 0; i < path.length; i++) {
+    const next = path[i + 1];
+
+    if (next) {
+      const nextX = next.x + unit.size / 2;
+      const nextY = next.y + unit.size / 2;
+
+      let clear = true;
+      for (const rect of blocked) {
+        if (segmentHitsRect(fromX, fromY, nextX, nextY, rect)) {
+          clear = false;
+          break;
+        }
+      }
+
+      if (clear) continue;                 // esta parada sobra
+    }
+
+    result.push(path[i]);
+    fromX = path[i].x + unit.size / 2;
+    fromY = path[i].y + unit.size / 2;
+  }
+
+  return result;
 }
 
 // Reparte las unidades seleccionadas en una formación alrededor del punto
@@ -1422,38 +1458,75 @@ function depleteTree() {
   }
 }
 
-// Empuja las unidades que se solapan para que no se pisen. Solo se separan
-// las que están quietas: mientras caminan pueden cruzarse, y así no se
-// bloquean al compartir la misma esquina de una ruta.
+// Evita que las unidades se pisen. Las quietas se separan del todo; al que
+// camina se le empuja un poco para que esquive a las demás, y si se cruzan
+// dos que caminan se apartan suavemente.
 function separateUnits() {
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < units.length; i++) {
       for (let j = i + 1; j < units.length; j++) {
         const a = units[i];
         const b = units[j];
-        if (a.dest || b.dest) continue;
-        separatePair(a, b);
+        const aMoving = Boolean(a.dest);
+        const bMoving = Boolean(b.dest);
+
+        if (!aMoving && !bMoving) {
+          separatePair(a, b, 1);
+        } else if (aMoving && !bMoving) {
+          pushMover(a, b);
+        } else if (!aMoving && bMoving) {
+          pushMover(b, a);
+        } else {
+          separatePair(a, b, 0.4);
+        }
       }
     }
   }
 }
 
-function separatePair(a, b) {
+function separatePair(a, b, strength) {
   const overlapX = Math.min(a.x + a.size, b.x + b.size) - Math.max(a.x, b.x);
   const overlapY = Math.min(a.y + a.size, b.y + b.size) - Math.max(a.y, b.y);
   if (overlapX <= 0 || overlapY <= 0) return;
 
   // Separarlas por el eje en el que se solapan menos.
+  // Si ambas están quietas se separan del todo; si alguna camina, el empuje se
+  // limita para que nunca sea mayor que su avance (2,67 px por frame a 60 Hz):
+  // si no, se quedarían oscilando sin llegar.
+  const limit = strength >= 1 ? Infinity : 0.8;
   if (overlapX < overlapY) {
-    const push = overlapX / 2 + 0.5;
+    const push = Math.min((overlapX / 2 + 0.5) * strength, limit);
     const direction = a.x < b.x ? 1 : -1;
     pushApart(a, -push * direction, 0);
     pushApart(b, push * direction, 0);
   } else {
-    const push = overlapY / 2 + 0.5;
+    const push = Math.min((overlapY / 2 + 0.5) * strength, limit);
     const direction = a.y < b.y ? 1 : -1;
     pushApart(a, 0, -push * direction);
     pushApart(b, 0, push * direction);
+  }
+}
+
+// Aparta al que camina cuando se topa con uno quieto, sin mover al quieto.
+// Se aparta en perpendicular a su movimiento: empujarlo hacia atrás lo dejaría
+// oscilando contra el mismo obstáculo.
+function pushMover(mover, idle) {
+  const overlapX = Math.min(mover.x + mover.size, idle.x + idle.size) - Math.max(mover.x, idle.x);
+  const overlapY = Math.min(mover.y + mover.size, idle.y + idle.size) - Math.max(mover.y, idle.y);
+  if (overlapX <= 0 || overlapY <= 0) return;
+
+  const step = 0.8;                          // roce pequeño, no puede frenar a nadie
+  const dx = mover.dest ? mover.dest.x - mover.x : 0;
+  const dy = mover.dest ? mover.dest.y - mover.y : 0;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Va en horizontal: se aparta en vertical.
+    const direction = mover.y < idle.y ? -1 : 1;
+    pushApart(mover, 0, direction * Math.min(overlapY + 0.5, step));
+  } else {
+    // Va en vertical: se aparta en horizontal.
+    const direction = mover.x < idle.x ? -1 : 1;
+    pushApart(mover, direction * Math.min(overlapX + 0.5, step), 0);
   }
 }
 
