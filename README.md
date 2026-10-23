@@ -7,8 +7,10 @@ frameworks ni dependencias. Todo el juego vive en `main.js`.
 
 Abre `index.html` con doble clic (funciona con `file://`, no hace falta servidor).
 
-El objetivo es **destruir el campamento enemigo** de la esquina superior derecha.
-El campamento saca guardias si te acercas; si lo destruyes, ganas.
+El objetivo es **destruir el campamento enemigo** de la esquina superior derecha,
+pero el campamento no se queda quieto: a partir del primer minuto manda oleadas
+hacia tu base cada 45 segundos, y cada oleada es más grande. Si te quedas sin
+unidades y sin edificios, pierdes.
 
 ### Controles
 
@@ -21,10 +23,13 @@ El campamento saca guardias si te acercas; si lo destruyes, ganas.
 | Talar el árbol | Clic derecho sobre el árbol |
 | Atacar | Clic derecho sobre un enemigo o el campamento |
 | Construir cuartel | Tecla `B` o botón **Cuartel** |
-| Entrenar unidad | Seleccionar un cuartel y pulsar **Entrenar** |
+| Construir torre | Tecla `T` o botón **Torre** |
+| Entrenar soldado / arquero | Seleccionar un cuartel y pulsar el botón |
 | Cámara | `WASD` o flechas, o acercar el ratón a un borde |
 | Zoom | Rueda del ratón |
-| Guardar / cargar | Botones arriba a la derecha |
+| Saltar con el minimapa | Clic en el minimapa |
+| Guardar / cargar / sonido | Botones arriba a la derecha |
+| Reiniciar al terminar | `R` |
 | Deseleccionar | `Escape` |
 
 ## Bucle de juego
@@ -32,8 +37,10 @@ El campamento saca guardias si te acercas; si lo destruyes, ganas.
 1. Selecciona las seis unidades y mándalas a talar el árbol (300 de madera).
 2. Cada viaje lleva 10 de madera al **centro de mando**. La madera solo cuenta
    cuando se entrega.
-3. Con 150 de madera construye un **cuartel**; cada unidad cuesta 50 y tarda 4 s.
-4. Con el ejército, ve al campamento enemigo y destrúyelo.
+3. Con 150 de madera construye un **cuartel**; con 100, una **torre**.
+4. El cuartel entrena **soldados** (50, cuerpo a cuerpo) y **arqueros**
+   (60, más frágiles pero con mucho alcance).
+5. Aguanta las oleadas, explora con la niebla y destruye el campamento enemigo.
 
 ## Sistemas
 
@@ -45,15 +52,24 @@ El campamento saca guardias si te acercas; si lo destruyes, ganas.
   Dijkstra, más suavizado de esquinas innecesarias.
 - **Colisiones**: separación fuerte entre unidades quietas y roce suave cuando
   al menos una camina (limitado para no frenar el avance).
-- **Combate**: vida, daño, enfriamiento, auto-defensa, muerte, barras de vida y
-  campamento enemigo con guardias y condición de victoria.
+- **Combate**: vida, daño, enfriamiento, auto-defensa, muerte, barras de vida,
+  proyectiles para arqueros y torres, y campamento enemigo con condición de
+  victoria.
+- **Oleadas**: grupos enemigos que salen del campamento y avanzan hacia tu base,
+  con contador y pantalla de derrota.
 - **Recursos**: tala, capacidad de carga, viaje al centro de mando y retorno.
-- **Edificios**: cuartel con colocación en rejilla, coste, cola de entrenamiento
-  y aparición de unidades en huecos libres.
+- **Edificios**: cuartel y torre con colocación en rejilla, coste, cola de
+  entrenamiento por tipo y aparición de unidades en huecos libres.
+- **Niebla de guerra**: solo se ve lo que está cerca de tus unidades y
+  edificios; lo explorado se recuerda en penumbra.
+- **Minimapa**: terreno, edificios, unidades visibles y rectángulo de cámara;
+  clic para mover la vista.
 - **HUD**: madera, selección, botones contextuales y avisos flotantes.
+- **Sonido**: tonos sintetizados con WebAudio para golpes, disparos, muertes,
+  construcción, oleadas, victoria y derrota. Botón de silencio.
 - **Guardado**: estado completo en `localStorage` (unidades, edificios, árbol,
-  cámara, victoria). Los trabajadores que llevaban madera vuelven al centro de
-  mando al cargar.
+  cámara, oleadas y resultado). Los trabajadores que llevaban madera vuelven al
+  centro de mando al cargar.
 
 ## Pruebas
 
@@ -63,8 +79,8 @@ npm test
 
 No hay dependencias: usa el `node` instalado.
 
-- `tests/game.test.js`: 82 comprobaciones de selección, movimiento, rutas,
-  recursos, edificios, combate, HUD y guardado.
+- `tests/game.test.js`: 109 comprobaciones de selección, movimiento, rutas,
+  recursos, edificios, combate, oleadas, niebla, minimapa, sonido, HUD y guardado.
 - `tests/fuzz-movement.js`: 443 órdenes de movimiento aleatorias.
 - `tests/fuzz-gather.js`: 25 rondas de tala con conservación exacta de madera.
 - `tests/fuzz-build.js`: 40 rondas con 1–4 cuarteles aleatorios.
@@ -85,7 +101,8 @@ tests/          Arnés y suites de pruebas
 ## Límites conocidos
 
 - El guardado usa `localStorage` del navegador: no viaja entre equipos.
-- No hay niebla de guerra, minimapa ni sonido.
+- No hay multijugador, dificultad configurable ni sonido ambiente.
 - El camino se calcula por esquinas: funciona bien con rectángulos, no con
   formas orgánicas.
-- Los enemigos no construyen ni producen; el campamento solo saca guardias.
+- Los enemigos no construyen ni producen: el campamento solo manda guardias y
+  oleadas.

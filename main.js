@@ -1,7 +1,7 @@
 // =====================================================================
-// Mi primer RTS — Sesión 10
-// Combate y campamento enemigo, centro de mando con transporte de madera,
-// rutas suavizadas, guardado y HUD.
+// Mi primer RTS — Sesión 14
+// Oleadas, arqueros y torres, niebla de guerra con minimapa, guardado,
+// sonido y pulido visual.
 // =====================================================================
 
 // 1. Canvas y pincel
@@ -211,6 +211,9 @@ let fogTimer = 0;                                  // Segundos hasta recalcular 
 // Guardado en el navegador y aviso flotante.
 const SAVE_KEY = "mi-primer-rts-save";
 const toast = { text: "", time: 0 };
+
+// Sonido: tonos sintetizados con WebAudio, sin archivos externos.
+const audio = { context: null, enabled: true };
 
 // Separación mínima entre una unidad y un obstáculo cuando se recoloca un
 // destino. Debe ser mayor que el margen de la ruta (paddedRect) para que el
@@ -954,6 +957,8 @@ function tryPlaceBuilding() {
   obstacles.push(building);      // las unidades tienen que rodearlo
   buildMode.active = false;
 
+  playSound("build");
+
   clearSelection();
   selectedBuilding = building;
 }
@@ -1114,8 +1119,74 @@ function restartGame() {
   showToast("Recarga la página para reiniciar");
 }
 
+// --- Sonido ---
+
+function getAudioContext() {
+  if (!audio.enabled) return null;
+  if (audio.context) return audio.context;
+
+  const Ctor =
+    typeof window !== "undefined" ? window.AudioContext || window.webkitAudioContext : null;
+  if (!Ctor) return null;
+
+  try {
+    audio.context = new Ctor();
+  } catch (error) {
+    return null;
+  }
+  return audio.context;
+}
+
+function playSound(kind) {
+  if (!audio.enabled) return;
+
+  const context = getAudioContext();
+  if (!context) return;
+
+  if (context.state === "suspended" && typeof context.resume === "function") {
+    context.resume();
+  }
+
+  const presets = {
+    hit: { frequency: 220, duration: 0.08, type: "square", volume: 0.03 },
+    shoot: { frequency: 620, duration: 0.08, type: "triangle", volume: 0.025 },
+    death: { frequency: 110, duration: 0.2, type: "sawtooth", volume: 0.04 },
+    build: { frequency: 440, duration: 0.2, type: "triangle", volume: 0.04 },
+    wave: { frequency: 90, duration: 0.45, type: "sawtooth", volume: 0.05 },
+    victory: { frequency: 660, duration: 0.6, type: "sine", volume: 0.06 },
+    defeat: { frequency: 80, duration: 0.7, type: "sine", volume: 0.06 },
+  };
+
+  const preset = presets[kind] || presets.hit;
+  const now = context.currentTime;
+
+  try {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+
+    oscillator.type = preset.type;
+    oscillator.frequency.value = preset.frequency;
+    gain.gain.setValueAtTime(preset.volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + preset.duration);
+
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + preset.duration);
+  } catch (error) {
+    // Si el navegador bloquea el audio, el juego sigue igual.
+  }
+}
+
+function toggleSound() {
+  audio.enabled = !audio.enabled;
+  if (audio.enabled) playSound("build");
+  showToast(audio.enabled ? "Sonido activado" : "Sonido silenciado");
+}
+
 function toolbarButtons() {
   return {
+    sound: { x: canvas.width - 260, y: 10, w: 78, h: 26 },
     save: { x: canvas.width - 176, y: 10, w: 78, h: 26 },
     load: { x: canvas.width - 92, y: 10, w: 78, h: 26 },
   };
@@ -1393,6 +1464,7 @@ function updateCombat(unit, dt) {
   if (unit.cooldown <= 0) {
     applyDamage(target, unit.damage);
     unit.cooldown = unit.cooldownMax;
+    playSound(unit.range > 60 ? "shoot" : "hit");
 
     if (unit.range > 60) {
       // Los arqueros y las torres dibujan un proyectil.
@@ -1421,6 +1493,11 @@ function applyDamage(target, amount) {
   if (!target || target.hp <= 0) return;
 
   target.hp -= amount;
+
+  if (units.includes(target)) {
+    target.hitFlash = 0.12;
+  }
+
   if (target.hp > 0) return;
 
   target.hp = 0;
@@ -1429,6 +1506,14 @@ function applyDamage(target, amount) {
     destroyCamp();
     return;
   }
+
+  playSound("death");
+  effects.push({
+    x: target.x + target.size / 2,
+    y: target.y + target.size / 2,
+    age: 0,
+    color: "#f87171",
+  });
 
   if (units.includes(target)) {
     removeUnit(target);
@@ -1463,6 +1548,14 @@ function destroyCamp() {
   if (buildingIndex !== -1) buildings.splice(buildingIndex, 1);
   const obstacleIndex = obstacles.indexOf(camp);
   if (obstacleIndex !== -1) obstacles.splice(obstacleIndex, 1);
+
+  playSound("victory");
+  effects.push({
+    x: camp.x + camp.size / 2,
+    y: camp.y + camp.size / 2,
+    age: 0,
+    color: "#fbbf24",
+  });
 
   gameState.victory = true;
 }
@@ -1520,6 +1613,7 @@ function updateWaves(dt) {
 
   if (count > 0) {
     showToast(`¡Oleada ${waveState.number}!`);
+    playSound("wave");
   }
 }
 
@@ -1543,6 +1637,7 @@ function updateDefeat() {
 
   if (!hasUnits && !hasBuildings) {
     gameState.defeat = true;
+    playSound("defeat");
     showToast("Derrota");
   }
 }
@@ -1565,7 +1660,11 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (event.key.toLowerCase() === "b" && !event.repeat && !gameState.victory && !gameState.defeat) {
-    startBuildMode();
+    startBuildMode("barracks");
+  }
+
+  if (event.key.toLowerCase() === "t" && !event.repeat && !gameState.victory && !gameState.defeat) {
+    startBuildMode("tower");
   }
 
   if (
@@ -1600,6 +1699,10 @@ canvas.addEventListener("mousedown", (event) => {
 
   // Botones de guardado, arriba a la derecha.
   const toolbar = toolbarButtons();
+  if (pointInRect(p.screenX, p.screenY, toolbar.sound)) {
+    toggleSound();
+    return;
+  }
   if (pointInRect(p.screenX, p.screenY, toolbar.save)) {
     saveGame();
     return;
@@ -1865,6 +1968,12 @@ function update(dt) {
 
     if (unit.carrying >= CARRY_CAPACITY - 0.0001) {
       goDeposit(unit);                     // carga llena: al centro de mando
+    }
+  }
+
+  for (const unit of units) {
+    if (unit.hitFlash > 0) {
+      unit.hitFlash = Math.max(0, unit.hitFlash - dt);
     }
   }
 
@@ -2243,6 +2352,11 @@ function drawUnits() {
     }
     ctx.fillRect(unit.x, unit.y, unit.size, unit.size);
 
+    if (unit.hitFlash > 0) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+      ctx.fillRect(unit.x, unit.y, unit.size, unit.size);
+    }
+
     if (unit.type === "archer" && unit.team === TEAM_PLAYER) {
       // Arco para distinguir al arquero del soldado.
       ctx.strokeStyle = "rgba(224, 242, 254, 0.9)";
@@ -2360,15 +2474,16 @@ function drawSelectionBox() {
 
 function drawToolbar() {
   const buttons = toolbarButtons();
+  drawToolbarButton(buttons.sound, "Sonido", audio.enabled ? "#5b8a6a" : "#7f1d1d");
   drawToolbarButton(buttons.save, "Guardar");
   drawToolbarButton(buttons.load, "Cargar");
 }
 
-function drawToolbarButton(rect, label) {
+function drawToolbarButton(rect, label, accent) {
   ctx.fillStyle = "rgba(10, 16, 22, 0.82)";
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-  ctx.strokeStyle = "#3a4a5a";
+  ctx.strokeStyle = accent || "#3a4a5a";
   ctx.lineWidth = 1;
   ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
 

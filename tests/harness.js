@@ -70,7 +70,7 @@ function loadGame() {
     "keys, gameLoop, tree, world, stockpile, obstacles, mouse, screenToWorld, clampCamera," +
     "buildings, buildMode, getSelectedBuilding: () => selectedBuilding, camp, gameState," +
     "waveState, fog, updateFog, isVisibleAt, isExploredAt, minimapRect, minimapClick," +
-    "createUnit, toast, saveGame, loadGame, canStand" +
+    "audio, createUnit, toast, saveGame, loadGame, canStand" +
     "};";
 
   vm.runInNewContext(code + hook, sandbox);

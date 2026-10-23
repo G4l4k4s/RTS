@@ -874,5 +874,19 @@ check(
     Math.abs(fogGame.camera.y - cameraBeforeMini.y) > 1
 );
 
+// ---------------------------------------------------------------------
+// 36. Sonido
+// ---------------------------------------------------------------------
+const soundRun = loadGame();
+const soundGame = soundRun.game;
+
+check("el sonido empieza activado", soundGame.audio.enabled === true);
+
+fire(soundRun.canvasListeners, "mousedown", mouseAt(570, 20));
+check("el botón Sonido silencia", soundGame.audio.enabled === false);
+
+fire(soundRun.canvasListeners, "mousedown", mouseAt(570, 20));
+check("el botón Sonido vuelve a activarlo", soundGame.audio.enabled === true);
+
 console.log(failures === 0 ? "\nTODO OK" : "\nFALLOS: " + failures);
 process.exit(failures === 0 ? 0 : 1);
