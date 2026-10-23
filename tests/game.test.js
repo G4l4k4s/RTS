@@ -379,7 +379,7 @@ game.clearSelection();
 
 const buildingsBefore = game.buildings.length;
 
-clickAt(700, 560);   // botón "Cuartel" en el HUD
+clickAt(500, 560);   // botón "Cuartel" (izquierda) en el HUD
 check("el botón Cuartel entra en modo colocación", game.buildMode.active === true);
 
 fire(canvasListeners, "mousemove", { clientX: 200, clientY: 150 });
@@ -403,8 +403,8 @@ game.render();
 const buttonTexts = drawCalls.filter((c) => c[0] === "fillText").map((c) => String(c[1]));
 check(
   "el HUD dibuja los botones",
-  buttonTexts.some((t) => t.includes("Cuartel · 150")) &&
-    buttonTexts.some((t) => t.includes("Entrenar · 50")),
+  buttonTexts.some((t) => t.includes("Soldado · 50")) &&
+    buttonTexts.some((t) => t.includes("Arquero · 60")),
   buttonTexts.join(" | ")
 );
 
@@ -414,7 +414,8 @@ check(
 const barracks = game.buildings.find((building) => building.type === "barracks");
 const woodBeforeInvalid = game.stockpile.wood;
 
-clickAt(700, 560);   // volver a modo colocación
+game.clearSelection();
+clickAt(500, 560);   // volver a modo colocación
 check("vuelve a entrar en modo colocación", game.buildMode.active === true);
 
 clickAt(200, 150);   // mismo sitio: ocupado
@@ -435,7 +436,7 @@ const unitsBeforeTraining = game.units.length;
 
 clickAt(500, 560);   // botón "Entrenar"
 check("entrenar descuenta madera", game.stockpile.wood === 200, game.stockpile.wood);
-check("la unidad entra en cola", barracks.queue === 1, barracks.queue);
+check("la unidad entra en cola", barracks.queue.length === 1, barracks.queue.length);
 
 tick(4.2);
 check("sale una unidad nueva", game.units.length === unitsBeforeTraining + 1);
@@ -466,13 +467,26 @@ check(
 // Volver a seleccionar el cuartel para seguir entrenando.
 clickAt(200, 150);
 
+clickAt(700, 560);   // botón "Arquero"
+check("entrenar arquero descuenta 60", game.stockpile.wood === 140, game.stockpile.wood);
+check("el arquero entra en cola", barracks.queue.length === 1, barracks.queue.length);
+
+tick(4.2);
+const archer = game.units[game.units.length - 1];
+check(
+  "sale un arquero con más alcance",
+  archer.type === "archer" && archer.range > 100,
+  JSON.stringify({ type: archer.type, range: archer.range })
+);
+check("el arquero es del jugador", archer.team === "player");
+
 clickAt(500, 560);
 clickAt(500, 560);
-check("se pueden encolar dos más", barracks.queue === 2, barracks.queue);
-check("se cobran las dos", game.stockpile.wood === 100, game.stockpile.wood);
+check("se pueden encolar dos más", barracks.queue.length === 2, barracks.queue.length);
+check("se cobran las dos", game.stockpile.wood === 40, game.stockpile.wood);
 
 tick(8.5);
-check("salen las dos unidades encoladas", game.units.length === unitsBeforeTraining + 3);
+check("salen las dos unidades encoladas", game.units.length === unitsBeforeTraining + 4);
 
 // ---------------------------------------------------------------------
 // 23. Rodear el cuartel
@@ -514,7 +528,8 @@ check("clic derecho en el HUD no mueve unidades", game.units[0].dest === null);
 // 25. Sin madera no se puede construir
 // ---------------------------------------------------------------------
 game.stockpile.wood = 0;
-clickAt(700, 560);
+game.clearSelection();
+clickAt(500, 560);
 check("sin madera no se entra en colocación", game.buildMode.active === false);
 
 // ---------------------------------------------------------------------
@@ -782,6 +797,38 @@ check(
   "se dibuja la pantalla de derrota",
   defeatRun.drawCalls.some((c) => c[0] === "fillText" && String(c[1]).includes("Derrota"))
 );
+
+// ---------------------------------------------------------------------
+// 33. Torre defensiva
+// ---------------------------------------------------------------------
+const towerRun = loadGame();
+const towerGame = towerRun.game;
+towerGame.waveState.timer = 1e9;
+towerGame.stockpile.wood = 300;
+towerGame.camera.x = 200;
+towerGame.camera.y = 150;
+towerGame.camera.zoom = 1;
+towerGame.clearSelection();
+
+fire(towerRun.canvasListeners, "mousedown", mouseAt(700, 560));
+check(
+  "el botón Torre entra en colocación",
+  towerGame.buildMode.active === true && towerGame.buildMode.type === "tower"
+);
+
+fire(towerRun.canvasListeners, "mousemove", mouseAt(500, 450));
+fire(towerRun.canvasListeners, "mousedown", mouseAt(500, 450));
+
+const tower = towerGame.buildings.find((building) => building.type === "tower");
+check("la torre se construye", Boolean(tower));
+check("la torre cuesta 100", towerGame.stockpile.wood === 200, towerGame.stockpile.wood);
+check("la torre bloquea el paso", Boolean(tower) && towerGame.obstacles.includes(tower));
+
+const towerEnemy = towerGame.createUnit(760, 600, "enemy");
+towerGame.units.push(towerEnemy);
+for (let i = 0; i < 120; i++) towerGame.update(1 / 60);
+
+check("la torre dispara sola al enemigo", towerEnemy.hp < towerEnemy.maxHp, towerEnemy.hp);
 
 console.log(failures === 0 ? "\nTODO OK" : "\nFALLOS: " + failures);
 process.exit(failures === 0 ? 0 : 1);

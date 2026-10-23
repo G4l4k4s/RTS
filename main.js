@@ -29,11 +29,17 @@ const HUD_HEIGHT = 64;                            // Alto de la barra de interfa
 const BARRACKS_COST = 150;                        // Madera que cuesta un cuartel
 const BARRACKS_SIZE = 80;                         // Lado del cuartel
 const BARRACKS_HP = 300;                          // Vida de un cuartel
-const UNIT_COST = 50;                             // Madera que cuesta entrenar una unidad
+const TOWER_COST = 100;                           // Madera que cuesta una torre
+const TOWER_SIZE = 60;
+const TOWER_HP = 250;
+const TOWER_RANGE = 150;                          // Alcance de la torre
+const TOWER_DAMAGE = 10;
+const TOWER_COOLDOWN = 1;
+const UNIT_COST = 50;                             // Madera que cuesta un soldado
 const TRAIN_TIME = 4;                             // Segundos que tarda una unidad
 const MAX_QUEUE = 5;                              // Unidades en cola por cuartel
-const MAX_UNITS = 40;                             // Tope de unidades en el mapa
-const BUILD_SNAP = 20;                            // El cuartel se coloca en una rejilla de 20 px
+const MAX_UNITS = 40;                             // Tope de unidades del jugador
+const BUILD_SNAP = 20;                            // Los edificios se colocan en una rejilla de 20 px
 
 // Combate
 const TEAM_PLAYER = "player";
@@ -60,22 +66,62 @@ const WAVE_FIRST_DELAY = 60;                      // Segundos hasta la primera o
 const WAVE_INTERVAL = 45;                         // Segundos entre oleadas
 const WAVE_MAX_LIVE = 24;                         // Tope de enemigos vivos a la vez
 
-// Crea una unidad del equipo indicado con sus estadísticas de combate.
-function createUnit(x, y, team) {
-  const player = team === TEAM_PLAYER;
-  const hp = player ? UNIT_MAX_HP : ENEMY_MAX_HP;
+// Tipos de unidad del jugador.
+const UNIT_STATS = {
+  soldier: {
+    hp: UNIT_MAX_HP,
+    damage: UNIT_DAMAGE,
+    range: UNIT_ATTACK_RANGE,
+    cooldown: UNIT_ATTACK_COOLDOWN,
+    speed: UNIT_SPEED,
+    color: "#3b82f6",
+    cost: UNIT_COST,
+  },
+  archer: {
+    hp: 70,
+    damage: 9,
+    range: 130,
+    cooldown: 1.1,
+    speed: 150,
+    color: "#38bdf8",
+    cost: 60,
+  },
+};
+
+// Tipos de edificio que se pueden construir.
+const BUILD_SPECS = {
+  barracks: { cost: BARRACKS_COST, size: BARRACKS_SIZE, hp: BARRACKS_HP },
+  tower: { cost: TOWER_COST, size: TOWER_SIZE, hp: TOWER_HP },
+};
+
+// Crea una unidad del equipo y tipo indicados.
+function createUnit(x, y, team, type = "soldier") {
+  const stats =
+    team === TEAM_ENEMY
+      ? {
+          hp: ENEMY_MAX_HP,
+          damage: ENEMY_DAMAGE,
+          range: ENEMY_ATTACK_RANGE,
+          cooldown: ENEMY_ATTACK_COOLDOWN,
+          speed: UNIT_SPEED,
+          color: "#ef4444",
+        }
+      : UNIT_STATS[type] || UNIT_STATS.soldier;
 
   return {
     x,
     y,
     size: UNIT_SIZE,
     team,
-    hp,
-    maxHp: hp,
-    damage: player ? UNIT_DAMAGE : ENEMY_DAMAGE,
-    range: player ? UNIT_ATTACK_RANGE : ENEMY_ATTACK_RANGE,
-    cooldownMax: player ? UNIT_ATTACK_COOLDOWN : ENEMY_ATTACK_COOLDOWN,
+    type: team === TEAM_ENEMY ? "soldier" : type,
+    hp: stats.hp,
+    maxHp: stats.hp,
+    damage: stats.damage,
+    range: stats.range,
+    cooldownMax: stats.cooldown,
     cooldown: 0,
+    speed: stats.speed,
+    color: stats.color,
     attackTarget: null,
     repathTimer: 0,
     selected: false,
@@ -106,7 +152,7 @@ const buildings = [];                             // Cuarteles construidos
 let selectedBuilding = null;                      // Cuartel seleccionado, si hay uno
 
 // Colocación de un edificio nuevo: sigue al ratón hasta hacer clic.
-const buildMode = { active: false, x: 0, y: 0, valid: false };
+const buildMode = { active: false, type: "barracks", x: 0, y: 0, valid: false };
 
 // Rectángulos que bloquean el paso: el árbol y los edificios.
 const obstacles = [tree];
@@ -755,14 +801,14 @@ function depositWood(unit) {
 // 5.1. Cuarteles: colocación y entrenamiento
 // ---------------------------------------------------------------------
 
-// ¿Cabe un cuartel en esta posición? Sin salirse del mundo y sin pisar
-// obstáculos ni unidades.
-function canPlaceBuilding(x, y) {
-  if (x < 0 || y < 0 || x + BARRACKS_SIZE > world.width || y + BARRACKS_SIZE > world.height) {
+// ¿Cabe un edificio de este tamaño en esta posición? Sin salirse del mundo y
+// sin pisar obstáculos ni unidades.
+function canPlaceBuilding(x, y, size) {
+  if (x < 0 || y < 0 || x + size > world.width || y + size > world.height) {
     return false;
   }
 
-  const rect = { x, y, w: BARRACKS_SIZE, h: BARRACKS_SIZE };
+  const rect = { x, y, w: size, h: size };
 
   for (const obstacle of obstacles) {
     if (rectsOverlap(rect, { x: obstacle.x, y: obstacle.y, w: obstacle.size, h: obstacle.size })) {
@@ -779,15 +825,19 @@ function canPlaceBuilding(x, y) {
   return true;
 }
 
-// Entra en modo colocación (o sale si ya estaba activo).
-function startBuildMode() {
-  if (buildMode.active) {
+// Entra en modo colocación del edificio indicado.
+function startBuildMode(type = "barracks") {
+  const spec = BUILD_SPECS[type];
+  if (!spec) return;
+
+  if (buildMode.active && buildMode.type === type) {
     cancelBuildMode();
     return;
   }
-  if (stockpile.wood < BARRACKS_COST) return;
+  if (stockpile.wood < spec.cost) return;
 
   buildMode.active = true;
+  buildMode.type = type;
   buildMode.valid = false;
 
   // Empezar en el centro de la vista.
@@ -800,30 +850,35 @@ function cancelBuildMode() {
   buildMode.active = false;
 }
 
-// Coloca el fantasma del cuartel en la rejilla más cercana al ratón.
+// Coloca el fantasma del edificio en la rejilla más cercana al ratón.
 function updateBuildGhost(worldX, worldY) {
-  buildMode.x = Math.round((worldX - BARRACKS_SIZE / 2) / BUILD_SNAP) * BUILD_SNAP;
-  buildMode.y = Math.round((worldY - BARRACKS_SIZE / 2) / BUILD_SNAP) * BUILD_SNAP;
-  buildMode.valid = canPlaceBuilding(buildMode.x, buildMode.y);
+  const size = BUILD_SPECS[buildMode.type].size;
+
+  buildMode.x = Math.round((worldX - size / 2) / BUILD_SNAP) * BUILD_SNAP;
+  buildMode.y = Math.round((worldY - size / 2) / BUILD_SNAP) * BUILD_SNAP;
+  buildMode.valid = canPlaceBuilding(buildMode.x, buildMode.y, size);
 }
 
 // Intenta construir donde está el fantasma. Si no cabe, no cobra nada.
 function tryPlaceBuilding() {
   if (!buildMode.active || !buildMode.valid) return;
-  if (stockpile.wood < BARRACKS_COST) return;
 
-  stockpile.wood -= BARRACKS_COST;
+  const spec = BUILD_SPECS[buildMode.type];
+  if (!spec || stockpile.wood < spec.cost) return;
+
+  stockpile.wood -= spec.cost;
 
   const building = {
-    type: "barracks",
+    type: buildMode.type,
     team: TEAM_PLAYER,
     x: buildMode.x,
     y: buildMode.y,
-    size: BARRACKS_SIZE,
-    hp: BARRACKS_HP,
-    maxHp: BARRACKS_HP,
-    queue: 0,          // unidades esperando en la cola
-    progress: 0,       // segundos de la unidad que se está entrenando
+    size: spec.size,
+    hp: spec.hp,
+    maxHp: spec.hp,
+    queue: buildMode.type === "barracks" ? [] : undefined,
+    progress: 0,
+    cooldown: 0,
   };
 
   buildings.push(building);
@@ -838,38 +893,49 @@ function tryPlaceBuilding() {
 function hudButtons() {
   const y = canvas.height - HUD_HEIGHT + 12;
   return {
-    train: { x: 430, y, w: 164, h: 40 },
-    barracks: { x: 614, y, w: 170, h: 40 },
+    left: { x: 430, y, w: 164, h: 40 },
+    right: { x: 614, y, w: 170, h: 40 },
   };
 }
 
-function canTrain() {
+function unitCost(type) {
+  return UNIT_STATS[type] ? UNIT_STATS[type].cost : UNIT_COST;
+}
+
+function canTrain(type = "soldier") {
   return Boolean(
     selectedBuilding &&
     selectedBuilding.type === "barracks" &&
-    stockpile.wood >= UNIT_COST &&
-    selectedBuilding.queue < MAX_QUEUE &&
-    units.length < MAX_UNITS
+    Array.isArray(selectedBuilding.queue) &&
+    selectedBuilding.queue.length < MAX_QUEUE &&
+    stockpile.wood >= unitCost(type) &&
+    units.filter((unit) => unit.team === TEAM_PLAYER).length < MAX_UNITS
   );
 }
 
-function trainUnit() {
-  if (!canTrain()) return;
-  stockpile.wood -= UNIT_COST;
-  selectedBuilding.queue += 1;
+function trainUnit(type = "soldier") {
+  if (!canTrain(type)) return;
+  stockpile.wood -= unitCost(type);
+  selectedBuilding.queue.push(type);
 }
 
 // Clic en la barra inferior: solo los botones hacen algo.
 function handleHudClick(screenX, screenY) {
   const buttons = hudButtons();
 
-  if (pointInRect(screenX, screenY, buttons.barracks)) {
-    startBuildMode();
+  if (selectedBuilding && selectedBuilding.type === "barracks") {
+    if (pointInRect(screenX, screenY, buttons.left)) {
+      trainUnit("soldier");
+    } else if (pointInRect(screenX, screenY, buttons.right)) {
+      trainUnit("archer");
+    }
     return;
   }
 
-  if (pointInRect(screenX, screenY, buttons.train)) {
-    trainUnit();
+  if (pointInRect(screenX, screenY, buttons.left)) {
+    startBuildMode("barracks");
+  } else if (pointInRect(screenX, screenY, buttons.right)) {
+    startBuildMode("tower");
   }
 }
 
@@ -877,14 +943,16 @@ function handleHudClick(screenX, screenY) {
 function updateBuildings(dt) {
   for (const building of buildings) {
     if (building.type !== "barracks" || building.team !== TEAM_PLAYER) continue;
-    if (!building.queue || building.queue <= 0) continue;
+    if (!Array.isArray(building.queue) || building.queue.length === 0) continue;
 
     building.progress += dt;
     if (building.progress < TRAIN_TIME) continue;
 
+    const type = building.queue[0];
+
     // Si no hay hueco alrededor, se reintenta en el siguiente frame.
-    if (spawnUnit(building)) {
-      building.queue -= 1;
+    if (spawnUnit(building, type)) {
+      building.queue.shift();
       building.progress = 0;
     } else {
       building.progress = TRAIN_TIME;
@@ -893,13 +961,38 @@ function updateBuildings(dt) {
 }
 
 // Busca un hueco libre alrededor del cuartel y saca ahí la unidad nueva.
-function spawnUnit(building) {
+function spawnUnit(building, type = "soldier") {
   const spot = findSpawnSpot(building);
   if (!spot) return false;
 
-  // createUnit deja la unidad completa: equipo, vida, daño y rango.
-  units.push(createUnit(spot.x, spot.y, building.team || TEAM_PLAYER));
+  units.push(createUnit(spot.x, spot.y, building.team || TEAM_PLAYER, type));
   return true;
+}
+
+// Las torres disparan solas al enemigo más cercano dentro de su alcance.
+function updateTowers(dt) {
+  for (const building of buildings) {
+    if (building.type !== "tower" || building.team !== TEAM_PLAYER) continue;
+
+    building.cooldown = Math.max(0, (building.cooldown || 0) - dt);
+    if (building.cooldown > 0) continue;
+
+    const target = findNearestOpponent(building, TOWER_RANGE);
+    if (!target) continue;
+
+    applyDamage(target, TOWER_DAMAGE);
+    building.cooldown = TOWER_COOLDOWN;
+
+    effects.push({
+      kind: "bolt",
+      x: building.x + building.size / 2,
+      y: building.y + building.size / 2,
+      x2: target.x + target.size / 2,
+      y2: target.y + target.size / 2,
+      age: 0,
+      color: "#93c5fd",
+    });
+  }
 }
 
 function findSpawnSpot(building) {
@@ -987,8 +1080,9 @@ function saveGame() {
         size: building.size,
         hp: building.hp,
         maxHp: building.maxHp,
-        queue: building.queue || 0,
+        queue: Array.isArray(building.queue) ? [...building.queue] : [],
         progress: building.progress || 0,
+        cooldown: building.cooldown || 0,
       })),
       camp: { alive: camp.alive, spawnTimer: camp.spawnTimer },
     };
@@ -1074,8 +1168,13 @@ function loadGame() {
       size: saved.size,
       hp: saved.hp,
       maxHp: saved.maxHp,
-      queue: saved.queue || 0,
+      queue: Array.isArray(saved.queue)
+        ? saved.queue.slice()
+        : saved.queue > 0
+        ? Array(saved.queue).fill("soldier")
+        : [],
       progress: saved.progress || 0,
+      cooldown: saved.cooldown || 0,
     };
     buildings.push(building);
     obstacles.push(building);
@@ -1225,12 +1324,25 @@ function updateCombat(unit, dt) {
     applyDamage(target, unit.damage);
     unit.cooldown = unit.cooldownMax;
 
-    effects.push({
-      x: target.x + target.size / 2,
-      y: target.y + target.size / 2,
-      age: 0,
-      color: unit.team === TEAM_ENEMY ? "#f87171" : "#fbbf24",
-    });
+    if (unit.range > 60) {
+      // Los arqueros y las torres dibujan un proyectil.
+      effects.push({
+        kind: "bolt",
+        x: unit.x + unit.size / 2,
+        y: unit.y + unit.size / 2,
+        x2: target.x + target.size / 2,
+        y2: target.y + target.size / 2,
+        age: 0,
+        color: "#93c5fd",
+      });
+    } else {
+      effects.push({
+        x: target.x + target.size / 2,
+        y: target.y + target.size / 2,
+        age: 0,
+        color: unit.team === TEAM_ENEMY ? "#f87171" : "#fbbf24",
+      });
+    }
   }
 }
 
@@ -1531,7 +1643,7 @@ function updateUnit(unit, dt) {
   const dx = unit.dest.x - unit.x;
   const dy = unit.dest.y - unit.y;
   const distance = Math.hypot(dx, dy);
-  const step = UNIT_SPEED * dt;
+  const step = (unit.speed || UNIT_SPEED) * dt;
 
   // Ya llegó (o el paso de este frame la deja más cerca que el propio destino).
   if (distance <= step) {
@@ -1639,6 +1751,9 @@ function update(dt) {
 
   // Cuarteles: unidades en cola
   updateBuildings(dt);
+
+  // Torres: disparos automáticos
+  updateTowers(dt);
 
   // Tala: cada unidad llena su carga y la lleva al centro de mando.
   for (const unit of units) {
@@ -1854,6 +1969,11 @@ function drawBuildings() {
       continue;
     }
 
+    if (building.type === "tower") {
+      drawTower(building);
+      continue;
+    }
+
     // Base y tejado
     ctx.fillStyle = "#6b4a2c";
     ctx.fillRect(building.x, building.y, building.size, building.size);
@@ -1872,7 +1992,7 @@ function drawBuildings() {
     }
 
     // Barra de la unidad que se está entrenando
-    if (building.queue > 0) {
+    if (Array.isArray(building.queue) && building.queue.length > 0) {
       const ratio = building.progress / TRAIN_TIME;
       ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
       ctx.fillRect(building.x, building.y - 14, building.size, 8);
@@ -1913,6 +2033,29 @@ function drawDepot(building) {
   drawBuildingHealth(building);
 }
 
+function drawTower(building) {
+  ctx.fillStyle = "#4b5563";
+  ctx.fillRect(building.x, building.y, building.size, building.size);
+
+  ctx.fillStyle = "#9ca3af";
+  ctx.fillRect(building.x + 8, building.y + 8, building.size - 16, building.size - 16);
+
+  // Almenas del tejado
+  ctx.fillStyle = "#6b7280";
+  const notch = building.size / 5;
+  for (let i = 0; i < 5; i += 2) {
+    ctx.fillRect(building.x + i * notch, building.y - 6, notch, 8);
+  }
+
+  if (building === selectedBuilding) {
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 3 / camera.zoom;
+    ctx.strokeRect(building.x - 2, building.y - 2, building.size + 4, building.size + 4);
+  }
+
+  drawBuildingHealth(building);
+}
+
 function drawCamp(building) {
   ctx.fillStyle = "#3f1d1d";
   ctx.fillRect(building.x, building.y, building.size, building.size);
@@ -1935,7 +2078,8 @@ function drawBuildingHealth(building) {
   if (building.hp >= building.maxHp) return;
 
   const x = building.x;
-  const y = building.y - (building.queue > 0 || building.type === "depot" || building.type === "camp" ? 26 : 10);
+  const hasQueue = Array.isArray(building.queue) && building.queue.length > 0;
+  const y = building.y - (hasQueue || building.type === "depot" || building.type === "camp" || building.type === "tower" ? 26 : 10);
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(x, y, building.size, 6);
@@ -1946,25 +2090,37 @@ function drawBuildingHealth(building) {
 function drawBuildGhost() {
   if (!buildMode.active) return;
 
+  const size = BUILD_SPECS[buildMode.type].size;
+
   ctx.fillStyle = buildMode.valid ? "rgba(143, 206, 107, 0.3)" : "rgba(239, 68, 68, 0.3)";
-  ctx.fillRect(buildMode.x, buildMode.y, BARRACKS_SIZE, BARRACKS_SIZE);
+  ctx.fillRect(buildMode.x, buildMode.y, size, size);
 
   ctx.strokeStyle = buildMode.valid ? "#8fce6b" : "#ef4444";
   ctx.lineWidth = 2 / camera.zoom;
   ctx.setLineDash([8, 6]);
-  ctx.strokeRect(buildMode.x, buildMode.y, BARRACKS_SIZE, BARRACKS_SIZE);
+  ctx.strokeRect(buildMode.x, buildMode.y, size, size);
   ctx.setLineDash([]);
 }
 
 function drawEffects() {
   for (const effect of effects) {
     const t = effect.age / EFFECT_DURATION;            // 0 al empezar, 1 al desaparecer
-    ctx.beginPath();
-    ctx.arc(effect.x, effect.y, 6 + t * 26, 0, Math.PI * 2);
-    ctx.strokeStyle = effect.color || "#fbbf24";
     ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = effect.color || "#fbbf24";
     ctx.lineWidth = 2 / camera.zoom;
-    ctx.stroke();
+
+    if (effect.kind === "bolt") {
+      // Proyectil del arquero o de la torre.
+      ctx.beginPath();
+      ctx.moveTo(effect.x, effect.y);
+      ctx.lineTo(effect.x2, effect.y2);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(effect.x, effect.y, 6 + t * 26, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     ctx.globalAlpha = 1;
   }
 }
@@ -1974,9 +2130,18 @@ function drawUnits() {
     if (unit.team === TEAM_ENEMY) {
       ctx.fillStyle = "#ef4444";
     } else {
-      ctx.fillStyle = unit.selected ? "#fbbf24" : "#3b82f6";
+      ctx.fillStyle = unit.selected ? "#fbbf24" : unit.color || "#3b82f6";
     }
     ctx.fillRect(unit.x, unit.y, unit.size, unit.size);
+
+    if (unit.type === "archer" && unit.team === TEAM_PLAYER) {
+      // Arco para distinguir al arquero del soldado.
+      ctx.strokeStyle = "rgba(224, 242, 254, 0.9)";
+      ctx.lineWidth = 1.5 / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(unit.x + unit.size - 8, unit.y + unit.size / 2, 8, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+    }
 
     if (unit.selected) {
       ctx.strokeStyle = "#ffffff";
@@ -2146,20 +2311,27 @@ function drawHud() {
   // Información de la selección
   ctx.font = "14px system-ui";
   if (selectedBuilding) {
-    const isDepot = selectedBuilding.type === "depot";
+    const label =
+      selectedBuilding.type === "depot"
+        ? "Centro de mando"
+        : selectedBuilding.type === "tower"
+        ? "Torre"
+        : "Cuartel";
+
     ctx.fillStyle = "#e8e8e8";
-    ctx.fillText(
-      `${isDepot ? "Centro de mando" : "Cuartel"} · vida ${Math.ceil(selectedBuilding.hp)}`,
-      220,
-      top + 28
-    );
+    ctx.fillText(`${label} · vida ${Math.ceil(selectedBuilding.hp)}`, 220, top + 28);
+
     ctx.fillStyle = "#7d8794";
     ctx.font = "13px system-ui";
-    ctx.fillText(
-      isDepot ? "Entrega aquí la madera" : `Cola: ${selectedBuilding.queue} · Entrenar ${UNIT_COST}`,
-      220,
-      top + 48
-    );
+
+    if (selectedBuilding.type === "barracks") {
+      const queued = Array.isArray(selectedBuilding.queue) ? selectedBuilding.queue.length : 0;
+      ctx.fillText(`Cola: ${queued}`, 220, top + 48);
+    } else if (selectedBuilding.type === "tower") {
+      ctx.fillText(`Defensa automática · ${TOWER_DAMAGE} de daño`, 220, top + 48);
+    } else {
+      ctx.fillText("Entrega aquí la madera", 220, top + 48);
+    }
   } else {
     ctx.fillStyle = "#aab4c0";
     ctx.fillText(`Seleccionadas: ${selectedUnits().length}`, 220, top + 28);
@@ -2170,8 +2342,13 @@ function drawHud() {
 
   // Botones
   const buttons = hudButtons();
-  drawHudButton(buttons.train, "Entrenar", UNIT_COST, canTrain());
-  drawHudButton(buttons.barracks, "Cuartel", BARRACKS_COST, stockpile.wood >= BARRACKS_COST);
+  if (selectedBuilding && selectedBuilding.type === "barracks") {
+    drawHudButton(buttons.left, "Soldado", unitCost("soldier"), canTrain("soldier"));
+    drawHudButton(buttons.right, "Arquero", unitCost("archer"), canTrain("archer"));
+  } else {
+    drawHudButton(buttons.left, "Cuartel", BARRACKS_COST, stockpile.wood >= BARRACKS_COST);
+    drawHudButton(buttons.right, "Torre", TOWER_COST, stockpile.wood >= TOWER_COST);
+  }
 }
 
 function drawHudButton(rect, label, cost, enabled) {
