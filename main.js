@@ -15,6 +15,15 @@ const MAX_ZOOM = 1.6;                             // Cuánto se puede acercar
 const TILE_SIZE = 100;                            // Tamaño de cada celda de la cuadrícula
 const world = { width: 1600, height: 1200 };      // Tamaño del mundo en píxeles
 
+// Niebla de guerra y minimapa
+const FOG_TILE = 50;                              // Tamaño de celda de la niebla
+const FOG_COLS = world.width / FOG_TILE;
+const FOG_ROWS = world.height / FOG_TILE;
+const VISION_UNIT = 220;                          // Radio que revela una unidad
+const VISION_BUILDING = 260;                      // Radio que revela un edificio
+const MINIMAP_WIDTH = 160;
+const MINIMAP_HEIGHT = 120;
+
 const CAMERA_SPEED = 400;                         // Píxeles por segundo que se mueve la cámara
 const EDGE_SCROLL_MARGIN = 24;                    // Distancia al borde que activa el scroll
 const UNIT_SPEED = 160;                           // Píxeles por segundo que camina una unidad
@@ -191,6 +200,14 @@ const gameState = { victory: false, defeat: false };
 // Oleadas: cuánto falta para la siguiente y cuántas van.
 const waveState = { number: 0, timer: WAVE_FIRST_DELAY };
 
+// Niebla: 0 = sin explorar, 1 = explorado. "visible" es lo que se ve ahora.
+const fog = {
+  explored: new Uint8Array(FOG_COLS * FOG_ROWS),
+  visible: new Uint8Array(FOG_COLS * FOG_ROWS),
+};
+
+let fogTimer = 0;                                  // Segundos hasta recalcular la niebla
+
 // Guardado en el navegador y aviso flotante.
 const SAVE_KEY = "mi-primer-rts-save";
 const toast = { text: "", time: 0 };
@@ -245,6 +262,58 @@ function screenToWorld(screenX, screenY) {
     x: screenX / camera.zoom + camera.x,
     y: screenY / camera.zoom + camera.y,
   };
+}
+
+// --- Niebla de guerra ---
+
+function fogIndex(col, row) {
+  return row * FOG_COLS + col;
+}
+
+// Marca como visibles y exploradas las celdas dentro del radio.
+function revealCircle(centerX, centerY, radius) {
+  const minCol = Math.max(0, Math.floor((centerX - radius) / FOG_TILE));
+  const maxCol = Math.min(FOG_COLS - 1, Math.floor((centerX + radius) / FOG_TILE));
+  const minRow = Math.max(0, Math.floor((centerY - radius) / FOG_TILE));
+  const maxRow = Math.min(FOG_ROWS - 1, Math.floor((centerY + radius) / FOG_TILE));
+
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let col = minCol; col <= maxCol; col++) {
+      const tileX = col * FOG_TILE + FOG_TILE / 2;
+      const tileY = row * FOG_TILE + FOG_TILE / 2;
+      if (Math.hypot(tileX - centerX, tileY - centerY) > radius) continue;
+
+      const index = fogIndex(col, row);
+      fog.visible[index] = 1;
+      fog.explored[index] = 1;
+    }
+  }
+}
+
+function updateFog() {
+  fog.visible.fill(0);
+
+  for (const unit of units) {
+    if (unit.team !== TEAM_PLAYER) continue;
+    revealCircle(unit.x + unit.size / 2, unit.y + unit.size / 2, VISION_UNIT);
+  }
+
+  for (const building of buildings) {
+    if (building.team !== TEAM_PLAYER) continue;
+    revealCircle(building.x + building.size / 2, building.y + building.size / 2, VISION_BUILDING);
+  }
+}
+
+function isVisibleAt(x, y) {
+  const col = Math.max(0, Math.min(FOG_COLS - 1, Math.floor(x / FOG_TILE)));
+  const row = Math.max(0, Math.min(FOG_ROWS - 1, Math.floor(y / FOG_TILE)));
+  return fog.visible[fogIndex(col, row)] === 1;
+}
+
+function isExploredAt(x, y) {
+  const col = Math.max(0, Math.min(FOG_COLS - 1, Math.floor(x / FOG_TILE)));
+  const row = Math.max(0, Math.min(FOG_ROWS - 1, Math.floor(y / FOG_TILE)));
+  return fog.explored[fogIndex(col, row)] === 1;
 }
 
 // ¿Se solapan dos rectángulos { x, y, w, h }?
@@ -1198,6 +1267,7 @@ function loadGame() {
   drag.active = false;
   effects.length = 0;
   mouse.inside = false;
+  updateFog();
   clampCamera();
   showToast("Partida cargada");
 }
@@ -1539,6 +1609,9 @@ canvas.addEventListener("mousedown", (event) => {
     return;
   }
 
+  // Minimapa: centra la cámara donde se hace clic.
+  if (minimapClick(p.screenX, p.screenY)) return;
+
   // Partida terminada: no se dan órdenes al mapa.
   if (gameState.victory || gameState.defeat) return;
 
@@ -1755,6 +1828,14 @@ function update(dt) {
   // Torres: disparos automáticos
   updateTowers(dt);
 
+  // Niebla: lo que ven las unidades y edificios del jugador. No hace falta
+  // recalcularla en cada frame; con unas pocas veces por segundo basta.
+  fogTimer -= dt;
+  if (fogTimer <= 0) {
+    fogTimer = 0.15;
+    updateFog();
+  }
+
   // Tala: cada unidad llena su carga y la lleva al centro de mando.
   for (const unit of units) {
     if (!unit.task || unit.task.type !== "gather" || unit.task.phase !== "harvest") continue;
@@ -1959,6 +2040,10 @@ function drawTree() {
 
 function drawBuildings() {
   for (const building of buildings) {
+    if (building.team === TEAM_ENEMY && !isVisibleAt(building.x + building.size / 2, building.y + building.size / 2)) {
+      continue;
+    }
+
     if (building.type === "camp") {
       drawCamp(building);
       continue;
@@ -2125,8 +2210,32 @@ function drawEffects() {
   }
 }
 
+function drawFog() {
+  // Zonas nunca exploradas: negro.
+  ctx.fillStyle = "#03070b";
+  for (let row = 0; row < FOG_ROWS; row++) {
+    for (let col = 0; col < FOG_COLS; col++) {
+      if (fog.explored[fogIndex(col, row)]) continue;
+      ctx.fillRect(col * FOG_TILE, row * FOG_TILE, FOG_TILE, FOG_TILE);
+    }
+  }
+
+  // Zonas exploradas pero fuera de la visión actual: penumbra.
+  ctx.fillStyle = "rgba(3, 7, 11, 0.55)";
+  for (let row = 0; row < FOG_ROWS; row++) {
+    for (let col = 0; col < FOG_COLS; col++) {
+      const index = fogIndex(col, row);
+      if (!fog.explored[index] || fog.visible[index]) continue;
+      ctx.fillRect(col * FOG_TILE, row * FOG_TILE, FOG_TILE, FOG_TILE);
+    }
+  }
+}
+
 function drawUnits() {
   for (const unit of units) {
+    if (unit.team === TEAM_ENEMY && !isVisibleAt(unit.x + unit.size / 2, unit.y + unit.size / 2)) {
+      continue;
+    }
     if (unit.team === TEAM_ENEMY) {
       ctx.fillStyle = "#ef4444";
     } else {
@@ -2285,6 +2394,87 @@ function drawToast() {
   ctx.globalAlpha = 1;
 }
 
+function minimapRect() {
+  return {
+    x: canvas.width - MINIMAP_WIDTH - 10,
+    y: canvas.height - HUD_HEIGHT - MINIMAP_HEIGHT - 10,
+    w: MINIMAP_WIDTH,
+    h: MINIMAP_HEIGHT,
+  };
+}
+
+function drawMinimap() {
+  const rect = minimapRect();
+  const scaleX = MINIMAP_WIDTH / world.width;
+  const scaleY = MINIMAP_HEIGHT / world.height;
+
+  ctx.fillStyle = "rgba(4, 8, 12, 0.85)";
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  ctx.strokeStyle = "#334155";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+  // Árbol
+  if (!tree.depleted) {
+    ctx.fillStyle = "#22c55e";
+    ctx.fillRect(rect.x + tree.x * scaleX - 2, rect.y + tree.y * scaleY - 2, 4, 4);
+  }
+
+  // Edificios
+  for (const building of buildings) {
+    if (
+      building.team === TEAM_ENEMY &&
+      !isVisibleAt(building.x + building.size / 2, building.y + building.size / 2)
+    ) {
+      continue;
+    }
+
+    ctx.fillStyle = building.team === TEAM_ENEMY ? "#ef4444" : "#f59e0b";
+    ctx.fillRect(
+      rect.x + building.x * scaleX,
+      rect.y + building.y * scaleY,
+      Math.max(3, building.size * scaleX),
+      Math.max(3, building.size * scaleY)
+    );
+  }
+
+  // Unidades
+  for (const unit of units) {
+    if (unit.team === TEAM_ENEMY && !isVisibleAt(unit.x + unit.size / 2, unit.y + unit.size / 2)) {
+      continue;
+    }
+
+    ctx.fillStyle = unit.team === TEAM_ENEMY ? "#ef4444" : "#3b82f6";
+    ctx.fillRect(rect.x + unit.x * scaleX - 1, rect.y + unit.y * scaleY - 1, 3, 3);
+  }
+
+  // Rectángulo de la cámara
+  const viewWidth = canvas.width / camera.zoom;
+  const viewHeight = (canvas.height - HUD_HEIGHT) / camera.zoom;
+  ctx.strokeStyle = "#e8e8e8";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(
+    rect.x + camera.x * scaleX,
+    rect.y + camera.y * scaleY,
+    viewWidth * scaleX,
+    viewHeight * scaleY
+  );
+}
+
+function minimapClick(screenX, screenY) {
+  const rect = minimapRect();
+  if (!pointInRect(screenX, screenY, rect)) return false;
+
+  const worldX = (screenX - rect.x) / (MINIMAP_WIDTH / world.width);
+  const worldY = (screenY - rect.y) / (MINIMAP_HEIGHT / world.height);
+
+  camera.x = worldX - canvas.width / 2 / camera.zoom;
+  camera.y = worldY - (canvas.height - HUD_HEIGHT) / 2 / camera.zoom;
+  clampCamera();
+  return true;
+}
+
 function drawHud() {
   const top = canvas.height - HUD_HEIGHT;
 
@@ -2385,12 +2575,14 @@ function render() {
   drawBuildings();
   drawEffects();
   drawUnits();
+  drawFog();
   drawBuildGhost();
 
   // Interfaz: de vuelta a coordenadas de pantalla
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawSelectionBox();
   drawHud();
+  drawMinimap();
   drawWaveInfo();
   drawToolbar();
   drawToast();

@@ -830,5 +830,49 @@ for (let i = 0; i < 120; i++) towerGame.update(1 / 60);
 
 check("la torre dispara sola al enemigo", towerEnemy.hp < towerEnemy.maxHp, towerEnemy.hp);
 
+// ---------------------------------------------------------------------
+// 34. Niebla de guerra
+// ---------------------------------------------------------------------
+const fogRun = loadGame();
+const fogGame = fogRun.game;
+fogGame.waveState.timer = 1e9;
+fogGame.updateFog();
+
+const campCenterX = fogGame.camp.x + fogGame.camp.size / 2;
+const campCenterY = fogGame.camp.y + fogGame.camp.size / 2;
+
+check("el campamento empieza oculto", fogGame.isVisibleAt(campCenterX, campCenterY) === false);
+
+// Acercar una unidad revela la zona.
+const fogScout = fogGame.units[0];
+fogScout.x = fogGame.camp.x - 120;
+fogScout.y = fogGame.camp.y + 120;
+fogGame.updateFog();
+check("acercarse revela el campamento", fogGame.isVisibleAt(campCenterX, campCenterY) === true);
+
+// Al marcharse, deja de verse pero queda explorado.
+fogScout.x = 600;
+fogScout.y = 400;
+fogGame.updateFog();
+check(
+  "la zona explorada se recuerda aunque no se vea",
+  fogGame.isVisibleAt(campCenterX, campCenterY) === false &&
+    fogGame.isExploredAt(campCenterX, campCenterY) === true
+);
+
+// ---------------------------------------------------------------------
+// 35. Minimapa
+// ---------------------------------------------------------------------
+const mini = fogGame.minimapRect();
+const cameraBeforeMini = { x: fogGame.camera.x, y: fogGame.camera.y };
+
+fire(fogRun.canvasListeners, "mousedown", mouseAt(mini.x + mini.w * 0.75, mini.y + mini.h * 0.5));
+
+check(
+  "el minimapa mueve la cámara",
+  Math.abs(fogGame.camera.x - cameraBeforeMini.x) > 1 ||
+    Math.abs(fogGame.camera.y - cameraBeforeMini.y) > 1
+);
+
 console.log(failures === 0 ? "\nTODO OK" : "\nFALLOS: " + failures);
 process.exit(failures === 0 ? 0 : 1);
