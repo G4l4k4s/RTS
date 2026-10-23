@@ -1,7 +1,7 @@
 // =====================================================================
-// Mi primer RTS — Sesión 5
-// Talar el árbol y llevar la madera al HUD, cámara con zoom y scroll en los
-// bordes, y colisiones entre unidades.
+// Mi primer RTS — Sesión 6
+// Cuartel: se construye gastando madera, entrena unidades y bloquea el paso.
+// Rutas con grafo de esquinas para rodear varios edificios.
 // =====================================================================
 
 // 1. Canvas y pincel
@@ -25,6 +25,14 @@ const GATHER_RATE = 12;                           // Madera por segundo que extr
 const WOOD_PER_TREE = 300;                        // Madera que guarda un árbol
 const HUD_HEIGHT = 64;                            // Alto de la barra de interfaz
 
+const BARRACKS_COST = 150;                        // Madera que cuesta un cuartel
+const BARRACKS_SIZE = 80;                         // Lado del cuartel
+const UNIT_COST = 50;                             // Madera que cuesta entrenar una unidad
+const TRAIN_TIME = 4;                             // Segundos que tarda una unidad
+const MAX_QUEUE = 5;                              // Unidades en cola por cuartel
+const MAX_UNITS = 40;                             // Tope de unidades en el mapa
+const BUILD_SNAP = 20;                            // El cuartel se coloca en una rejilla de 20 px
+
 // Cada unidad guarda su ruta (path) y su destino actual (dest):
 // null = quieta; { x, y } = caminando hacia allí.
 const units = [
@@ -38,6 +46,12 @@ const units = [
 
 const tree = { x: 900, y: 500, size: 60, wood: WOOD_PER_TREE, maxWood: WOOD_PER_TREE, depleted: false }; // Árbol: da madera
 const stockpile = { wood: 0 };                    // Recursos del jugador
+
+const buildings = [];                             // Cuarteles construidos
+let selectedBuilding = null;                      // Cuartel seleccionado, si hay uno
+
+// Colocación de un edificio nuevo: sigue al ratón hasta hacer clic.
+const buildMode = { active: false, x: 0, y: 0, valid: false };
 
 // Rectángulos que bloquean el paso. De momento solo el árbol; cuando haya
 // edificios, bastará con añadirlos a esta lista.
@@ -106,17 +120,45 @@ function pointInRect(x, y, rect) {
 }
 
 // ¿El segmento que va de (x1,y1) a (x2,y2) atraviesa el rectángulo?
-// Recorremos el segmento a pasos de 4 px; es suficiente para rectángulos
-// grandes como el del árbol y se entiende mejor que una fórmula.
+// Se comprueba contra el rectángulo un poco encogido: así la ruta puede pasar
+// justo por el borde (las esquinas) pero no cruzar por dentro.
 function segmentHitsRect(x1, y1, x2, y2, rect) {
-  const steps = Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 4));
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps;
-    if (pointInRect(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, rect)) {
-      return true;
+  const inner = {
+    x: rect.x + 0.01,
+    y: rect.y + 0.01,
+    w: rect.w - 0.02,
+    h: rect.h - 0.02,
+  };
+
+  let t0 = 0;                                      // entrada del segmento
+  let t1 = 1;                                      // salida del segmento
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  // Cada lado del rectángulo recorta el trozo de segmento que queda dentro.
+  const sides = [
+    [-dx, x1 - inner.x],
+    [dx, inner.x + inner.w - x1],
+    [-dy, y1 - inner.y],
+    [dy, inner.y + inner.h - y1],
+  ];
+
+  for (const [p, q] of sides) {
+    if (p === 0) {
+      if (q < 0) return false;                     // paralelo y fuera
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
     }
   }
-  return false;
+
+  return true;
 }
 
 // Rectángulo del obstáculo "engordado": si el centro de la unidad pasa por
@@ -151,6 +193,21 @@ function unitAt(worldX, worldY) {
   return null;
 }
 
+// Devuelve el cuartel que contiene un punto del mundo, o null.
+function buildingAt(worldX, worldY) {
+  for (const building of buildings) {
+    if (
+      worldX >= building.x &&
+      worldX <= building.x + building.size &&
+      worldY >= building.y &&
+      worldY <= building.y + building.size
+    ) {
+      return building;
+    }
+  }
+  return null;
+}
+
 // ¿Puede una unidad estar en esta posición? (dentro del mundo y fuera de los obstáculos)
 function canStand(unit, x, y) {
   if (x < 0 || y < 0 || x + unit.size > world.width || y + unit.size > world.height) {
@@ -174,6 +231,7 @@ function clearSelection() {
   for (const unit of units) {
     unit.selected = false;
   }
+  selectedBuilding = null;
 }
 
 function selectedUnits() {
@@ -195,9 +253,16 @@ function selectionBox() {
 // Al soltar el botón izquierdo decidimos si fue un clic o una caja.
 function finishDrag() {
   if (!drag.moved) {
-    // Fue un clic: seleccionar la unidad bajo el cursor.
+    // Fue un clic: seleccionar lo que haya bajo el cursor.
     if (!drag.additive) clearSelection();
     const click = screenToWorld(drag.startScreenX, drag.startScreenY);
+
+    const building = buildingAt(click.x, click.y);
+    if (building) {
+      selectedBuilding = building;
+      return;
+    }
+
     const hit = unitAt(click.x, click.y);
     if (hit) hit.selected = true;
     return;
@@ -249,74 +314,94 @@ function clampDestination(unit, x, y) {
   return { x: tx, y: ty };
 }
 
-// Ruta de una unidad hasta su destino: en línea recta si no hay nada en medio,
-// o rodeando por una o dos esquinas de un obstáculo que sí estorbe.
+// Ruta de una unidad hasta su destino. Se construye un grafo con la salida, el
+// destino y las esquinas de todos los obstáculos: si dos puntos se "ven" (el
+// segmento no cruza nada) se conectan, y se busca el camino más corto.
 function buildRoute(unit, target) {
-  const centerX = unit.x + unit.size / 2;
-  const centerY = unit.y + unit.size / 2;
-  const targetX = target.x + unit.size / 2;
-  const targetY = target.y + unit.size / 2;
+  const start = { x: unit.x + unit.size / 2, y: unit.y + unit.size / 2 };
+  const end = { x: target.x + unit.size / 2, y: target.y + unit.size / 2 };
 
-  // ¿Hay algún obstáculo entre la unidad y el destino?
-  let blocking = null;
-  for (const obstacle of obstacles) {
-    const rect = paddedRect(obstacle, unit);
-    if (segmentHitsRect(centerX, centerY, targetX, targetY, rect)) {
-      blocking = rect;
-      break;
-    }
+  // Rectángulos engordados de todos los obstáculos.
+  const blocked = obstacles.map((obstacle) => paddedRect(obstacle, unit));
+
+  // Si no hay nada en medio, ir en línea recta.
+  const crosses = blocked.some((rect) => segmentHitsRect(start.x, start.y, end.x, end.y, rect));
+  if (!crosses) return [target];
+
+  // Nodos: 0 = salida, 1 = destino, el resto = esquinas de los obstáculos.
+  const nodes = [start, end];
+  for (const rect of blocked) {
+    nodes.push(
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h }
+    );
   }
 
-  if (!blocking) return [target];
+  // Aristas entre pares de nodos que se ven sin cruzar ningún obstáculo.
+  const count = nodes.length;
+  const edges = nodes.map(() => []);
 
-  // Coordenadas de las cuatro esquinas del rectángulo engordado.
-  const corners = [
-    { x: blocking.x, y: blocking.y },
-    { x: blocking.x + blocking.w, y: blocking.y },
-    { x: blocking.x + blocking.w, y: blocking.y + blocking.h },
-    { x: blocking.x, y: blocking.y + blocking.h },
-  ];
-
-  // Rutas candidatas: por una esquina, o por dos esquinas seguidas.
-  const candidates = [];
-  for (let i = 0; i < corners.length; i++) {
-    candidates.push([corners[i]]);
-    for (let j = 0; j < corners.length; j++) {
-      if (i !== j) candidates.push([corners[i], corners[j]]);
-    }
-  }
-
-  let bestRoute = null;
-  let bestCost = Infinity;
-
-  for (const candidate of candidates) {
-    const points = [{ x: centerX, y: centerY }, ...candidate, { x: targetX, y: targetY }];
-    let clear = true;
-    let cost = 0;
-
-    for (let i = 0; i < points.length - 1; i++) {
-      if (segmentHitsRect(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, blocking)) {
-        clear = false;
-        break;
+  for (let i = 0; i < count; i++) {
+    for (let j = i + 1; j < count; j++) {
+      let visible = true;
+      for (const rect of blocked) {
+        if (segmentHitsRect(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y, rect)) {
+          visible = false;
+          break;
+        }
       }
-      cost += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
-    }
+      if (!visible) continue;
 
-    if (clear && cost < bestCost) {
-      bestCost = cost;
-      bestRoute = candidate;
+      const cost = Math.hypot(nodes[j].x - nodes[i].x, nodes[j].y - nodes[i].y);
+      edges[i].push({ to: j, cost });
+      edges[j].push({ to: i, cost });
     }
   }
 
-  // Si no hay ninguna ruta libre, que vaya en línea recta: al menos se acercará.
-  if (!bestRoute) return [target];
+  // Dijkstra: distancia mínima desde la salida (0) hasta cada nodo.
+  const distance = nodes.map(() => Infinity);
+  const previous = nodes.map(() => -1);
+  const visited = nodes.map(() => false);
+  distance[0] = 0;
 
-  // Las esquinas son para el centro de la unidad; las pasamos a su esquina
-  // superior izquierda, que es como se guardan las posiciones.
-  const waypoints = bestRoute.map((corner) =>
-    clampDestination(unit, corner.x - unit.size / 2, corner.y - unit.size / 2)
+  for (let step = 0; step < count; step++) {
+    let current = -1;
+    for (let i = 0; i < count; i++) {
+      if (!visited[i] && distance[i] < Infinity && (current === -1 || distance[i] < distance[current])) {
+        current = i;
+      }
+    }
+    if (current === -1) break;
+
+    visited[current] = true;
+    for (const edge of edges[current]) {
+      if (distance[current] + edge.cost < distance[edge.to]) {
+        distance[edge.to] = distance[current] + edge.cost;
+        previous[edge.to] = current;
+      }
+    }
+  }
+
+  // Sin ruta: que vaya en línea recta y se acerque todo lo que pueda.
+  if (distance[1] === Infinity) return [target];
+
+  // Reconstruir el camino desde el destino hacia atrás.
+  const route = [];
+  let node = 1;
+  while (node !== -1 && node !== 0) {
+    route.unshift(nodes[node]);
+    node = previous[node];
+  }
+
+  // Las esquinas son para el centro de la unidad; se pasan a su esquina
+  // superior izquierda. El destino se deja tal cual.
+  return route.map((point) =>
+    point === end
+      ? target
+      : clampDestination(unit, point.x - unit.size / 2, point.y - unit.size / 2)
   );
-  return [...waypoints, target];
 }
 
 // Reparte las unidades seleccionadas en una formación alrededor del punto
@@ -415,6 +500,194 @@ function orderGather(selected) {
 }
 
 // ---------------------------------------------------------------------
+// 5.1. Cuarteles: colocación y entrenamiento
+// ---------------------------------------------------------------------
+
+// ¿Cabe un cuartel en esta posición? Sin salirse del mundo y sin pisar
+// obstáculos ni unidades.
+function canPlaceBuilding(x, y) {
+  if (x < 0 || y < 0 || x + BARRACKS_SIZE > world.width || y + BARRACKS_SIZE > world.height) {
+    return false;
+  }
+
+  const rect = { x, y, w: BARRACKS_SIZE, h: BARRACKS_SIZE };
+
+  for (const obstacle of obstacles) {
+    if (rectsOverlap(rect, { x: obstacle.x, y: obstacle.y, w: obstacle.size, h: obstacle.size })) {
+      return false;
+    }
+  }
+
+  for (const unit of units) {
+    if (rectsOverlap(rect, unitRect(unit))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Entra en modo colocación (o sale si ya estaba activo).
+function startBuildMode() {
+  if (buildMode.active) {
+    cancelBuildMode();
+    return;
+  }
+  if (stockpile.wood < BARRACKS_COST) return;
+
+  buildMode.active = true;
+  buildMode.valid = false;
+
+  // Empezar en el centro de la vista.
+  const centerX = camera.x + canvas.width / 2 / camera.zoom;
+  const centerY = camera.y + (canvas.height - HUD_HEIGHT) / 2 / camera.zoom;
+  updateBuildGhost(centerX, centerY);
+}
+
+function cancelBuildMode() {
+  buildMode.active = false;
+}
+
+// Coloca el fantasma del cuartel en la rejilla más cercana al ratón.
+function updateBuildGhost(worldX, worldY) {
+  buildMode.x = Math.round((worldX - BARRACKS_SIZE / 2) / BUILD_SNAP) * BUILD_SNAP;
+  buildMode.y = Math.round((worldY - BARRACKS_SIZE / 2) / BUILD_SNAP) * BUILD_SNAP;
+  buildMode.valid = canPlaceBuilding(buildMode.x, buildMode.y);
+}
+
+// Intenta construir donde está el fantasma. Si no cabe, no cobra nada.
+function tryPlaceBuilding() {
+  if (!buildMode.active || !buildMode.valid) return;
+  if (stockpile.wood < BARRACKS_COST) return;
+
+  stockpile.wood -= BARRACKS_COST;
+
+  const building = {
+    type: "barracks",
+    x: buildMode.x,
+    y: buildMode.y,
+    size: BARRACKS_SIZE,
+    queue: 0,          // unidades esperando en la cola
+    progress: 0,       // segundos de la unidad que se está entrenando
+  };
+
+  buildings.push(building);
+  obstacles.push(building);      // las unidades tienen que rodearlo
+  buildMode.active = false;
+
+  clearSelection();
+  selectedBuilding = building;
+}
+
+// Rectángulos de los botones del HUD (en coordenadas de pantalla).
+function hudButtons() {
+  const y = canvas.height - HUD_HEIGHT + 12;
+  return {
+    train: { x: 430, y, w: 164, h: 40 },
+    barracks: { x: 614, y, w: 170, h: 40 },
+  };
+}
+
+function canTrain() {
+  return Boolean(
+    selectedBuilding &&
+    selectedBuilding.type === "barracks" &&
+    stockpile.wood >= UNIT_COST &&
+    selectedBuilding.queue < MAX_QUEUE &&
+    units.length < MAX_UNITS
+  );
+}
+
+function trainUnit() {
+  if (!canTrain()) return;
+  stockpile.wood -= UNIT_COST;
+  selectedBuilding.queue += 1;
+}
+
+// Clic en la barra inferior: solo los botones hacen algo.
+function handleHudClick(screenX, screenY) {
+  const buttons = hudButtons();
+
+  if (pointInRect(screenX, screenY, buttons.barracks)) {
+    startBuildMode();
+    return;
+  }
+
+  if (pointInRect(screenX, screenY, buttons.train)) {
+    trainUnit();
+  }
+}
+
+// Avanza la cola de entrenamiento de cada cuartel.
+function updateBuildings(dt) {
+  for (const building of buildings) {
+    if (building.queue <= 0) continue;
+
+    building.progress += dt;
+    if (building.progress < TRAIN_TIME) continue;
+
+    // Si no hay hueco alrededor, se reintenta en el siguiente frame.
+    if (spawnUnit(building)) {
+      building.queue -= 1;
+      building.progress = 0;
+    } else {
+      building.progress = TRAIN_TIME;
+    }
+  }
+}
+
+// Busca un hueco libre alrededor del cuartel y saca ahí la unidad nueva.
+function spawnUnit(building) {
+  const spot = findSpawnSpot(building);
+  if (!spot) return false;
+
+  units.push({
+    x: spot.x,
+    y: spot.y,
+    size: UNIT_SIZE,
+    selected: false,
+    dest: null,
+    path: [],
+    gathering: false,
+    gatherOrder: false,
+    stuckTime: 0,
+  });
+  return true;
+}
+
+function findSpawnSpot(building) {
+  const gap = building.size / 2 + UNIT_SIZE / 2 + 6;
+  const offsets = [
+    { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
+    { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+  ];
+
+  // Varios anillos por si el primero está ocupado.
+  for (let ring = 0; ring < 3; ring++) {
+    const distance = gap + ring * (UNIT_SIZE + 8);
+
+    for (const offset of offsets) {
+      const x = building.x + building.size / 2 + offset.x * distance - UNIT_SIZE / 2;
+      const y = building.y + building.size / 2 + offset.y * distance - UNIT_SIZE / 2;
+      if (canPlaceUnit(x, y)) return { x, y };
+    }
+  }
+
+  return null;
+}
+
+// ¿Cabe una unidad aquí, sin pisar obstáculos ni otras unidades?
+function canPlaceUnit(x, y) {
+  if (!canStand({ size: UNIT_SIZE }, x, y)) return false;
+
+  const box = { x, y, w: UNIT_SIZE, h: UNIT_SIZE };
+  for (const unit of units) {
+    if (rectsOverlap(box, unitRect(unit))) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------
 // 6. Eventos
 // ---------------------------------------------------------------------
 
@@ -424,8 +697,17 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();                 // las flechas no deben hacer scroll
   }
   if (event.key === "Escape") {
-    clearSelection();
+    if (buildMode.active) {
+      cancelBuildMode();
+    } else {
+      clearSelection();
+    }
   }
+
+  if (event.key.toLowerCase() === "b" && !event.repeat) {
+    startBuildMode();
+  }
+
   keys[event.key.toLowerCase()] = true;
 });
 
@@ -447,7 +729,20 @@ window.addEventListener("blur", () => {
 canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;           // solo el botón izquierdo
   const p = pointerPosition(event);
-  if (p.screenY >= canvas.height - HUD_HEIGHT) return;   // clic en la interfaz, no en el mapa
+
+  // Clic en la barra inferior: botones del HUD.
+  if (p.screenY >= canvas.height - HUD_HEIGHT) {
+    handleHudClick(p.screenX, p.screenY);
+    return;
+  }
+
+  // Clic mientras se coloca un cuartel: intentar construirlo.
+  if (buildMode.active) {
+    updateBuildGhost(p.x, p.y);
+    tryPlaceBuilding();
+    return;
+  }
+
   drag.active = true;
   drag.additive = event.shiftKey;
   drag.moved = false;
@@ -480,6 +775,13 @@ window.addEventListener("mouseup", (event) => {
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();                   // quitar el menú contextual del navegador
   const p = pointerPosition(event);
+
+  // Clic derecho mientras se coloca: cancelar la construcción.
+  if (buildMode.active) {
+    cancelBuildMode();
+    return;
+  }
+
   if (p.screenY >= canvas.height - HUD_HEIGHT) return;   // clic en la interfaz
   issueMoveOrder(p.x, p.y);
 });
@@ -490,6 +792,10 @@ canvas.addEventListener("mousemove", (event) => {
   mouse.screenX = p.screenX;
   mouse.screenY = p.screenY;
   mouse.inside = true;
+
+  if (buildMode.active) {
+    updateBuildGhost(p.x, p.y);
+  }
 });
 
 canvas.addEventListener("mouseleave", () => {
@@ -616,6 +922,9 @@ function update(dt) {
 
   // Que no se pisen entre ellas
   separateUnits();
+
+  // Cuarteles: unidades en cola
+  updateBuildings(dt);
 
   // Tala: cada unidad que trabaja va sacando madera del árbol.
   for (const unit of units) {
@@ -756,6 +1065,49 @@ function drawTree() {
   ctx.fillRect(tree.x, tree.y - 14, tree.size * ratio, 8);
 }
 
+function drawBuildings() {
+  for (const building of buildings) {
+    // Base y tejado
+    ctx.fillStyle = "#6b4a2c";
+    ctx.fillRect(building.x, building.y, building.size, building.size);
+    ctx.fillStyle = "#a97c50";
+    ctx.fillRect(building.x + 8, building.y + 8, building.size - 16, building.size - 16);
+
+    // Puerta
+    ctx.fillStyle = "#3d2a17";
+    ctx.fillRect(building.x + building.size / 2 - 10, building.y + building.size - 24, 20, 24);
+
+    // Marca de selección
+    if (building === selectedBuilding) {
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 3 / camera.zoom;
+      ctx.strokeRect(building.x - 2, building.y - 2, building.size + 4, building.size + 4);
+    }
+
+    // Barra de la unidad que se está entrenando
+    if (building.queue > 0) {
+      const ratio = building.progress / TRAIN_TIME;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.fillRect(building.x, building.y - 14, building.size, 8);
+      ctx.fillStyle = "#60a5fa";
+      ctx.fillRect(building.x, building.y - 14, building.size * ratio, 8);
+    }
+  }
+}
+
+function drawBuildGhost() {
+  if (!buildMode.active) return;
+
+  ctx.fillStyle = buildMode.valid ? "rgba(143, 206, 107, 0.3)" : "rgba(239, 68, 68, 0.3)";
+  ctx.fillRect(buildMode.x, buildMode.y, BARRACKS_SIZE, BARRACKS_SIZE);
+
+  ctx.strokeStyle = buildMode.valid ? "#8fce6b" : "#ef4444";
+  ctx.lineWidth = 2 / camera.zoom;
+  ctx.setLineDash([8, 6]);
+  ctx.strokeRect(buildMode.x, buildMode.y, BARRACKS_SIZE, BARRACKS_SIZE);
+  ctx.setLineDash([]);
+}
+
 function drawEffects() {
   for (const effect of effects) {
     const t = effect.age / EFFECT_DURATION;            // 0 al empezar, 1 al desaparecer
@@ -833,14 +1185,38 @@ function drawHud() {
   ctx.font = "16px system-ui";
   ctx.fillText(`Madera: ${Math.floor(stockpile.wood + 1e-9)}`, 46, top + 38);
 
-  // Unidades seleccionadas
-  ctx.fillStyle = "#aab4c0";
-  ctx.fillText(`Seleccionadas: ${selectedUnits().length}`, 220, top + 38);
+  // Información de la selección
+  ctx.font = "14px system-ui";
+  if (selectedBuilding) {
+    ctx.fillStyle = "#e8e8e8";
+    ctx.fillText(`Cuartel · cola: ${selectedBuilding.queue}`, 220, top + 28);
+    ctx.fillStyle = "#7d8794";
+    ctx.fillText(`Entrenar cuesta ${UNIT_COST} de madera`, 220, top + 48);
+  } else {
+    ctx.fillStyle = "#aab4c0";
+    ctx.fillText(`Seleccionadas: ${selectedUnits().length}`, 220, top + 28);
+    ctx.fillStyle = "#7d8794";
+    ctx.font = "13px system-ui";
+    ctx.fillText("Clic derecho: mover · sobre el árbol: talar", 220, top + 48);
+  }
 
-  // Ayuda
-  ctx.fillStyle = "#7d8794";
-  ctx.font = "13px system-ui";
-  ctx.fillText("Clic derecho: mover · sobre el árbol: talar", 420, top + 37);
+  // Botones
+  const buttons = hudButtons();
+  drawHudButton(buttons.train, "Entrenar", UNIT_COST, canTrain());
+  drawHudButton(buttons.barracks, "Cuartel", BARRACKS_COST, stockpile.wood >= BARRACKS_COST);
+}
+
+function drawHudButton(rect, label, cost, enabled) {
+  ctx.fillStyle = enabled ? "#2f4a3a" : "#1d2329";
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  ctx.strokeStyle = enabled ? "#5b8a6a" : "#333b44";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+  ctx.fillStyle = enabled ? "#e8e8e8" : "#626b77";
+  ctx.font = "14px system-ui";
+  ctx.fillText(`${label} · ${cost}`, rect.x + 14, rect.y + 25);
 }
 
 function render() {
@@ -861,8 +1237,10 @@ function render() {
 
   drawGrid();
   drawTree();
+  drawBuildings();
   drawEffects();
   drawUnits();
+  drawBuildGhost();
 
   // Interfaz: de vuelta a coordenadas de pantalla
   ctx.setTransform(1, 0, 0, 1, 0, 0);
