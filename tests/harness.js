@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-function loadGame() {
+function loadGame(options = {}) {
   const mainPath = path.join(__dirname, "..", "main.js");
   const code = fs.readFileSync(mainPath, "utf8");
 
@@ -70,13 +70,21 @@ function loadGame() {
     "keys, gameLoop, tree, world, stockpile, obstacles, mouse, screenToWorld, clampCamera," +
     "buildings, buildMode, getSelectedBuilding: () => selectedBuilding, camp, gameState," +
     "waveState, fog, updateFog, isVisibleAt, isExploredAt, minimapRect, minimapClick," +
-    "audio, createUnit, toast, saveGame, loadGame, canStand" +
+    "audio, createUnit, toast, saveGame, loadGame, canStand, startNewGame, menuButtons," +
+    "handleMenuClick, togglePause, goToMenu, hasAutosave, DIFFICULTIES, AUTOSAVE_KEY" +
     "};";
 
   vm.runInNewContext(code + hook, sandbox);
 
+  const game = sandbox.__game;
+
+  // Por defecto las pruebas arrancan una partida normal; el menú se prueba aparte.
+  if (options.start !== false) {
+    game.startNewGame("normal");
+  }
+
   return {
-    game: sandbox.__game,
+    game,
     canvas,
     drawCalls,
     canvasListeners,

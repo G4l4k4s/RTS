@@ -888,5 +888,119 @@ check("el botón Sonido silencia", soundGame.audio.enabled === false);
 fire(soundRun.canvasListeners, "mousedown", mouseAt(570, 20));
 check("el botón Sonido vuelve a activarlo", soundGame.audio.enabled === true);
 
+// ---------------------------------------------------------------------
+// 37. Menú, dificultad, pausa y autoguardado
+// ---------------------------------------------------------------------
+const menuRun = loadGame({ start: false });
+const menuGame = menuRun.game;
+
+check("el juego arranca en el menú", menuGame.gameState.scene === "menu");
+
+const menu = menuGame.menuButtons();
+fire(menuRun.canvasListeners, "mousedown", mouseAt(menu.easy.x + 20, menu.easy.y + 20));
+check(
+  "Fácil arranca con madera y dificultad",
+  menuGame.gameState.scene === "playing" &&
+    menuGame.gameState.difficulty === "easy" &&
+    menuGame.stockpile.wood === 100,
+  menuGame.stockpile.wood
+);
+
+// Pausa: el mundo se congela.
+fire(menuRun.windowListeners, "keydown", { key: "p" });
+check("P pausa la partida", menuGame.gameState.paused === true);
+
+const frozenUnit = menuGame.units[0];
+const frozenX = frozenUnit.x;
+const frozenY = frozenUnit.y;
+frozenUnit.dest = { x: frozenX + 200, y: frozenY };
+menuGame.update(1);
+check("en pausa no se mueve nada", frozenUnit.x === frozenX && frozenUnit.y === frozenY);
+
+fire(menuRun.windowListeners, "keydown", { key: "p" });
+check("P reanuda la partida", menuGame.gameState.paused === false);
+
+// Autoguardado al empezar una oleada.
+menuGame.waveState.timer = 0;
+menuGame.update(1 / 60);
+check("se autoguarda al empezar la oleada", menuRun.storage.has(menuGame.AUTOSAVE_KEY));
+
+menuGame.stockpile.wood = 999;
+menuGame.loadGame(menuGame.AUTOSAVE_KEY);
+check("Continuar recupera el autoguardado", menuGame.stockpile.wood === 100, menuGame.stockpile.wood);
+
+// M vuelve al menú y Continuar retoma.
+fire(menuRun.windowListeners, "keydown", { key: "m" });
+check("M vuelve al menú", menuGame.gameState.scene === "menu");
+
+const menu2 = menuGame.menuButtons();
+fire(menuRun.canvasListeners, "mousedown", mouseAt(menu2.continue.x + 20, menu2.continue.y + 20));
+check("Continuar carga la partida", menuGame.gameState.scene === "playing");
+
+// ---------------------------------------------------------------------
+// 38. Comodidad de RTS
+// ---------------------------------------------------------------------
+const qolRun = loadGame();
+const qolGame = qolRun.game;
+
+// Doble clic: selecciona todas las unidades del mismo tipo en pantalla.
+const qolClick = (x, y) => {
+  fire(qolRun.canvasListeners, "mousedown", mouseAt(x, y));
+  fire(qolRun.windowListeners, "mouseup", mouseAt(x, y));
+};
+
+qolGame.clearSelection();
+const soldier = qolGame.units[0];
+const soldierScreenX = (soldier.x + soldier.size / 2 - qolGame.camera.x) * qolGame.camera.zoom;
+const soldierScreenY = (soldier.y + soldier.size / 2 - qolGame.camera.y) * qolGame.camera.zoom;
+qolClick(soldierScreenX, soldierScreenY);
+qolClick(soldierScreenX, soldierScreenY);
+
+check(
+  "doble clic selecciona todas del mismo tipo",
+  qolGame.selectedUnits().length === 6 &&
+    qolGame.selectedUnits().every((unit) => unit.type === "soldier"),
+  qolGame.selectedUnits().length
+);
+
+// Grupos de control.
+qolGame.clearSelection();
+qolGame.units[0].selected = true;
+qolGame.units[1].selected = true;
+fire(qolRun.windowListeners, "keydown", { key: "1", ctrlKey: true, preventDefault() {} });
+qolGame.clearSelection();
+fire(qolRun.windowListeners, "keydown", { key: "1", preventDefault() {} });
+check("Ctrl+1 guarda y 1 recupera el grupo", qolGame.selectedUnits().length === 2, qolGame.selectedUnits().length);
+
+// Espacio centra la cámara en la base.
+qolGame.camera.x = 0;
+qolGame.camera.y = 0;
+fire(qolRun.windowListeners, "keydown", { key: " ", preventDefault() {} });
+check("Espacio centra la cámara en la base", qolGame.camera.x > 0 || qolGame.camera.y > 0);
+
+// Shift encola una segunda orden de movimiento.
+qolGame.clearSelection();
+const mover = qolGame.units[0];
+mover.selected = true;
+mover.x = 600;
+mover.y = 400;
+mover.dest = null;
+mover.path = [];
+mover.task = null;
+mover.attackTarget = null;
+
+qolGame.issueMoveOrder(800, 400, true);
+const firstPathLength = mover.path.length;
+qolGame.issueMoveOrder(700, 600, true);
+
+check("Shift encola una segunda orden", mover.path.length > firstPathLength, mover.path.length);
+
+for (let i = 0; i < 600; i++) qolGame.update(1 / 60);
+check(
+  "la unidad termina en el segundo destino",
+  Math.abs(mover.x - 700) < 5 && Math.abs(mover.y - 600) < 5,
+  JSON.stringify([Math.round(mover.x), Math.round(mover.y)])
+);
+
 console.log(failures === 0 ? "\nTODO OK" : "\nFALLOS: " + failures);
 process.exit(failures === 0 ? 0 : 1);

@@ -7,19 +7,28 @@ frameworks ni dependencias. Todo el juego vive en `main.js`.
 
 Abre `index.html` con doble clic (funciona con `file://`, no hace falta servidor).
 
+Al arrancar verás el **menú**: elige Fácil, Normal o Difícil. La dificultad cambia
+la madera inicial y el ritmo y tamaño de las oleadas. Si ya jugaste, **Continuar**
+retoma el autoguardado de la última oleada.
+
 El objetivo es **destruir el campamento enemigo** de la esquina superior derecha,
-pero el campamento no se queda quieto: a partir del primer minuto manda oleadas
-hacia tu base cada 45 segundos, y cada oleada es más grande. Si te quedas sin
-unidades y sin edificios, pierdes.
+pero el campamento no se queda quieto: manda oleadas hacia tu base y cada vez son
+más grandes. Si te quedas sin unidades y sin edificios, pierdes.
 
 ### Controles
 
 | Acción | Control |
 |---|---|
 | Seleccionar una unidad | Clic izquierdo |
+| Seleccionar todo el tipo en pantalla | Doble clic |
 | Caja de selección | Arrastrar con el botón izquierdo |
 | Añadir a la selección | `Shift` + clic o `Shift` + arrastrar |
 | Mover | Clic derecho en el suelo |
+| Encolar movimiento | `Shift` + clic derecho |
+| Grupos de control | `Ctrl+1…9` guarda, `1…9` recupera |
+| Centrar en la base | `Espacio` |
+| Pausa | `P` |
+| Volver al menú | `M` |
 | Talar el árbol | Clic derecho sobre el árbol |
 | Atacar | Clic derecho sobre un enemigo o el campamento |
 | Construir cuartel | Tecla `B` o botón **Cuartel** |
@@ -29,7 +38,7 @@ unidades y sin edificios, pierdes.
 | Zoom | Rueda del ratón |
 | Saltar con el minimapa | Clic en el minimapa |
 | Guardar / cargar / sonido | Botones arriba a la derecha |
-| Reiniciar al terminar | `R` |
+| Reiniciar | `R` (en pausa o al terminar) |
 | Deseleccionar | `Escape` |
 
 ## Bucle de juego
@@ -67,9 +76,17 @@ unidades y sin edificios, pierdes.
 - **HUD**: madera, selección, botones contextuales y avisos flotantes.
 - **Sonido**: tonos sintetizados con WebAudio para golpes, disparos, muertes,
   construcción, oleadas, victoria y derrota. Botón de silencio.
+- **Menú y dificultad**: Fácil, Normal y Difícil cambian madera inicial, primera
+  oleada, intervalo, tamaño y fuerza enemiga. La partida se puede pausar (`P`),
+  reiniciar (`R`) o mandar al menú (`M`).
+- **Autoguardado**: al empezar cada oleada se guarda sola; **Continuar** en el
+  menú retoma esa partida.
+- **Comodidad RTS**: doble clic selecciona el mismo tipo en pantalla, `Ctrl+1…9`
+  guarda grupos, `1…9` los recupera centrando la cámara, `Shift`+clic derecho
+  encola movimientos y `Espacio` centra la base.
 - **Guardado**: estado completo en `localStorage` (unidades, edificios, árbol,
-  cámara, oleadas y resultado). Los trabajadores que llevaban madera vuelven al
-  centro de mando al cargar.
+  cámara, oleadas, dificultad y resultado). Los trabajadores que llevaban madera
+  vuelven al centro de mando al cargar.
 
 ## Pruebas
 
@@ -79,8 +96,9 @@ npm test
 
 No hay dependencias: usa el `node` instalado.
 
-- `tests/game.test.js`: 109 comprobaciones de selección, movimiento, rutas,
-  recursos, edificios, combate, oleadas, niebla, minimapa, sonido, HUD y guardado.
+- `tests/game.test.js`: 123 comprobaciones de selección, movimiento, rutas,
+  recursos, edificios, combate, oleadas, niebla, minimapa, sonido, menú,
+  dificultad, pausa, autoguardado, grupos y atajos.
 - `tests/fuzz-movement.js`: 443 órdenes de movimiento aleatorias.
 - `tests/fuzz-gather.js`: 25 rondas de tala con conservación exacta de madera.
 - `tests/fuzz-build.js`: 40 rondas con 1–4 cuarteles aleatorios.
@@ -101,7 +119,7 @@ tests/          Arnés y suites de pruebas
 ## Límites conocidos
 
 - El guardado usa `localStorage` del navegador: no viaja entre equipos.
-- No hay multijugador, dificultad configurable ni sonido ambiente.
+- No hay multijugador ni sonido ambiente.
 - El camino se calcula por esquinas: funciona bien con rectángulos, no con
   formas orgánicas.
 - Los enemigos no construyen ni producen: el campamento solo manda guardias y

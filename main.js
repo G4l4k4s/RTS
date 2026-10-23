@@ -75,6 +75,51 @@ const WAVE_FIRST_DELAY = 60;                      // Segundos hasta la primera o
 const WAVE_INTERVAL = 45;                         // Segundos entre oleadas
 const WAVE_MAX_LIVE = 24;                         // Tope de enemigos vivos a la vez
 
+const AUTOSAVE_KEY = "mi-primer-rts-autosave";
+
+// Presets de dificultad: economía inicial y ritmo de las oleadas.
+const DIFFICULTIES = {
+  easy: {
+    label: "Fácil",
+    wood: 100,
+    firstWave: 90,
+    waveInterval: 55,
+    waveBase: 1,
+    waveGrowth: 0.35,
+    enemyHp: 0.9,
+    enemyDamage: 0.85,
+  },
+  normal: {
+    label: "Normal",
+    wood: 0,
+    firstWave: 60,
+    waveInterval: 45,
+    waveBase: 2,
+    waveGrowth: 0.5,
+    enemyHp: 1,
+    enemyDamage: 1,
+  },
+  hard: {
+    label: "Difícil",
+    wood: 0,
+    firstWave: 45,
+    waveInterval: 35,
+    waveBase: 3,
+    waveGrowth: 0.7,
+    enemyHp: 1.15,
+    enemyDamage: 1.15,
+  },
+};
+
+const START_POSITIONS = [
+  [600, 400],
+  [660, 400],
+  [720, 400],
+  [600, 460],
+  [660, 460],
+  [720, 460],
+];
+
 // Tipos de unidad del jugador.
 const UNIT_STATS = {
   soldier: {
@@ -195,7 +240,13 @@ buildings.push(depot);
 obstacles.push(depot);
 
 // Estado global de la partida.
-const gameState = { victory: false, defeat: false };
+const gameState = {
+  scene: "menu",              // menu | playing
+  paused: false,
+  difficulty: "normal",
+  victory: false,
+  defeat: false,
+};
 
 // Oleadas: cuánto falta para la siguiente y cuántas van.
 const waveState = { number: 0, timer: WAVE_FIRST_DELAY };
@@ -237,6 +288,10 @@ const drag = {
 };
 
 const effects = [];                               // Círculos que marcan a dónde se dio la orden
+
+// Grupos de control (Ctrl+1…9) y detección de doble clic.
+const controlGroups = Array.from({ length: 9 }, () => []);
+let lastClick = { type: null, time: -1, x: -999, y: -999 };
 
 // Estado del ratón, para el scroll cuando se acerca a los bordes.
 const mouse = { screenX: 0, screenY: 0, inside: false };
@@ -448,6 +503,61 @@ function selectedUnits() {
   return units.filter((unit) => unit.selected);
 }
 
+// ¿Está la unidad dentro de la parte visible del mapa?
+function isOnScreen(unit) {
+  const screenX = (unit.x + unit.size / 2 - camera.x) * camera.zoom;
+  const screenY = (unit.y + unit.size / 2 - camera.y) * camera.zoom;
+  return (
+    screenX >= 0 &&
+    screenX <= canvas.width &&
+    screenY >= 0 &&
+    screenY <= canvas.height - HUD_HEIGHT
+  );
+}
+
+// Doble clic: selecciona todas las unidades del mismo tipo que se ven.
+function selectSameTypeOnScreen(type) {
+  clearSelection();
+  for (const unit of units) {
+    if (unit.team !== TEAM_PLAYER || unit.type !== type) continue;
+    if (isOnScreen(unit)) unit.selected = true;
+  }
+}
+
+// Recupera un grupo de control y centra la cámara en él.
+function selectControlGroup(index) {
+  clearSelection();
+
+  const group = controlGroups[index].filter(
+    (unit) => units.includes(unit) && unit.team === TEAM_PLAYER
+  );
+  for (const unit of group) {
+    unit.selected = true;
+  }
+
+  if (group.length === 0) return;
+
+  const averageX = group.reduce((sum, unit) => sum + unit.x + unit.size / 2, 0) / group.length;
+  const averageY = group.reduce((sum, unit) => sum + unit.y + unit.size / 2, 0) / group.length;
+
+  camera.x = averageX - canvas.width / 2 / camera.zoom;
+  camera.y = averageY - (canvas.height - HUD_HEIGHT) / 2 / camera.zoom;
+  clampCamera();
+}
+
+// Centra la vista en el centro de mando.
+function centerOnBase() {
+  const base =
+    buildings.find((building) => building.type === "depot" && building.hp > 0) ||
+    buildings.find((building) => building.team === TEAM_PLAYER && building.hp > 0);
+  const target = base || units.find((unit) => unit.team === TEAM_PLAYER);
+  if (!target) return;
+
+  camera.x = target.x + target.size / 2 - canvas.width / 2 / camera.zoom;
+  camera.y = target.y + target.size / 2 - (canvas.height - HUD_HEIGHT) / 2 / camera.zoom;
+  clampCamera();
+}
+
 // Caja de selección actual, ya convertida al mundo.
 function selectionBox() {
   const start = screenToWorld(drag.startScreenX, drag.startScreenY);
@@ -475,7 +585,23 @@ function finishDrag() {
     if (building) return;          // los edificios enemigos no se seleccionan
 
     const hit = unitAt(click.x, click.y);
-    if (hit && hit.team === TEAM_PLAYER) hit.selected = true;
+    if (hit && hit.team === TEAM_PLAYER) {
+      const isDoubleClick =
+        !drag.additive &&
+        lastClick.type === hit.type &&
+        elapsed - lastClick.time <= 0.35 &&
+        Math.hypot(click.x - lastClick.x, click.y - lastClick.y) < 8;
+
+      if (isDoubleClick) {
+        selectSameTypeOnScreen(hit.type);
+      } else {
+        hit.selected = true;
+      }
+
+      lastClick = { type: hit.type, time: elapsed, x: click.x, y: click.y };
+    } else {
+      lastClick = { type: null, time: -1, x: -999, y: -999 };
+    }
     return;
   }
 
@@ -654,7 +780,7 @@ function smoothRoute(unit, path, blocked) {
 
 // Reparte las unidades seleccionadas en una formación alrededor del punto
 // y les asigna su destino a cada una.
-function issueMoveOrder(worldX, worldY) {
+function issueMoveOrder(worldX, worldY, queue = false) {
   const selected = selectedUnits();
   if (selected.length === 0) return;
 
@@ -708,8 +834,16 @@ function issueMoveOrder(worldX, worldY) {
     const column = index % columns;
     const row = Math.floor(index / columns);
     const target = clampDestination(unit, startX + column * spacing, startY + row * spacing);
-    unit.path = buildRoute(unit, target);   // [destino] o [esquina, destino]
-    unit.dest = unit.path[0];
+    const route = buildRoute(unit, target);   // [destino] o [esquina, destino]
+
+    if (queue && unit.dest) {
+      // Shift: se añade al final de la ruta en vez de reemplazarla.
+      unit.path.push(...route);
+    } else {
+      unit.path = route;
+      unit.dest = unit.path[0];
+    }
+
     unit.stuckTime = 0;
   });
 
@@ -1110,13 +1244,148 @@ function showToast(text) {
   toast.time = 2.5;
 }
 
-// Reiniciar: recargar la página es lo más limpio, no queda estado viejo.
+// Reiniciar: vuelve a empezar con la misma dificultad, sin recargar.
 function restartGame() {
-  if (typeof location !== "undefined" && typeof location.reload === "function") {
-    location.reload();
+  if (gameState.scene === "menu") return;
+  startNewGame(gameState.difficulty);
+}
+
+// --- Menú, pausa y dificultad ---
+
+function hasAutosave() {
+  try {
+    return Boolean(localStorage.getItem(AUTOSAVE_KEY));
+  } catch (error) {
+    return false;
+  }
+}
+
+function menuButtons() {
+  const width = 280;
+  const x = (canvas.width - width) / 2;
+  return {
+    easy: { x, y: 232, w: width, h: 50 },
+    normal: { x, y: 292, w: width, h: 50 },
+    hard: { x, y: 352, w: width, h: 50 },
+    continue: { x, y: 430, w: width, h: 44 },
+  };
+}
+
+function drawMenuButton(rect, label, detail, enabled = true) {
+  ctx.fillStyle = enabled ? "rgba(47, 74, 58, 0.9)" : "rgba(29, 35, 41, 0.9)";
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  ctx.strokeStyle = enabled ? "#5b8a6a" : "#333b44";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+  ctx.fillStyle = enabled ? "#e8e8e8" : "#626b77";
+  ctx.font = "18px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + 28);
+
+  ctx.fillStyle = "#8a94a6";
+  ctx.font = "12px system-ui";
+  ctx.fillText(detail, rect.x + rect.w / 2, rect.y + 44);
+  ctx.textAlign = "left";
+}
+
+function drawMenu() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0b1016";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Cuadrícula decorativa
+  ctx.strokeStyle = "rgba(74, 107, 82, 0.16)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= canvas.width; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "bold 44px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("MI PRIMER RTS", canvas.width / 2, 128);
+
+  ctx.fillStyle = "#8a94a6";
+  ctx.font = "15px system-ui";
+  ctx.fillText("Tala, construye, defiende y destruye el campamento enemigo", canvas.width / 2, 164);
+
+  const buttons = menuButtons();
+  drawMenuButton(buttons.easy, "Fácil", "Más madera y oleadas lentas");
+  drawMenuButton(buttons.normal, "Normal", "La experiencia equilibrada");
+  drawMenuButton(buttons.hard, "Difícil", "Oleadas antes y más duras");
+
+  const hasSave = hasAutosave();
+  drawMenuButton(buttons.continue, "Continuar", hasSave ? "Retoma el autoguardado" : "No hay partida guardada", hasSave);
+
+  ctx.fillStyle = "#7d8794";
+  ctx.font = "12px system-ui";
+  ctx.fillText("1 / 2 / 3 eligen dificultad · Se autoguarda al empezar cada oleada", canvas.width / 2, 538);
+  ctx.textAlign = "left";
+}
+
+function handleMenuClick(screenX, screenY) {
+  const buttons = menuButtons();
+
+  if (pointInRect(screenX, screenY, buttons.easy)) {
+    startNewGame("easy");
     return;
   }
-  showToast("Recarga la página para reiniciar");
+  if (pointInRect(screenX, screenY, buttons.normal)) {
+    startNewGame("normal");
+    return;
+  }
+  if (pointInRect(screenX, screenY, buttons.hard)) {
+    startNewGame("hard");
+    return;
+  }
+  if (hasAutosave() && pointInRect(screenX, screenY, buttons.continue)) {
+    loadGame(AUTOSAVE_KEY);
+  }
+}
+
+function togglePause() {
+  if (gameState.scene !== "playing") return;
+  if (gameState.victory || gameState.defeat) return;
+  gameState.paused = !gameState.paused;
+}
+
+function goToMenu() {
+  if (gameState.scene === "playing" && !gameState.victory && !gameState.defeat) {
+    saveGame(AUTOSAVE_KEY, true);
+  }
+  gameState.scene = "menu";
+  gameState.paused = false;
+  clearSelection();
+  buildMode.active = false;
+  drag.active = false;
+}
+
+function drawPause() {
+  if (!gameState.paused) return;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "bold 44px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("Pausa", canvas.width / 2, canvas.height / 2 - 20);
+
+  ctx.fillStyle = "#8a94a6";
+  ctx.font = "15px system-ui";
+  ctx.fillText("P: continuar · R: reiniciar · M: menú", canvas.width / 2, canvas.height / 2 + 24);
+  ctx.textAlign = "left";
 }
 
 // --- Sonido ---
@@ -1192,10 +1461,11 @@ function toolbarButtons() {
   };
 }
 
-function saveGame() {
+function saveGame(key = SAVE_KEY, silent = false) {
   try {
     const data = {
       version: 1,
+      difficulty: gameState.difficulty,
       camera: { x: camera.x, y: camera.y, zoom: camera.zoom },
       stockpile: { wood: stockpile.wood },
       tree: { wood: tree.wood, depleted: tree.depleted },
@@ -1206,6 +1476,8 @@ function saveGame() {
         x: unit.x,
         y: unit.y,
         team: unit.team,
+        type: unit.type || "soldier",
+        wave: Boolean(unit.wave),
         hp: unit.hp,
         maxHp: unit.maxHp,
         carrying: unit.carrying,
@@ -1227,18 +1499,18 @@ function saveGame() {
       camp: { alive: camp.alive, spawnTimer: camp.spawnTimer },
     };
 
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    showToast("Partida guardada");
+    localStorage.setItem(key, JSON.stringify(data));
+    if (!silent) showToast("Partida guardada");
   } catch (error) {
-    showToast("No se pudo guardar");
+    if (!silent) showToast("No se pudo guardar");
   }
 }
 
-function loadGame() {
+function loadGame(key = SAVE_KEY) {
   let data;
 
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) {
       showToast("No hay partida guardada");
       return;
@@ -1254,6 +1526,10 @@ function loadGame() {
     return;
   }
 
+  gameState.scene = "playing";
+  gameState.paused = false;
+  gameState.difficulty = DIFFICULTIES[data.difficulty] ? data.difficulty : "normal";
+
   // Mundo y cámara
   camera.x = data.camera.x;
   camera.y = data.camera.y;
@@ -1264,20 +1540,31 @@ function loadGame() {
   gameState.victory = Boolean(data.victory);
   gameState.defeat = Boolean(data.defeat);
   waveState.number = data.wave ? data.wave.number || 0 : 0;
-  waveState.timer = data.wave && Number.isFinite(data.wave.timer) ? data.wave.timer : WAVE_FIRST_DELAY;
+  waveState.timer =
+    data.wave && Number.isFinite(data.wave.timer)
+      ? data.wave.timer
+      : (DIFFICULTIES[gameState.difficulty] || DIFFICULTIES.normal).firstWave;
 
   // Unidades
   units.length = 0;
   for (const saved of data.units) {
     // Partidas antiguas podían traer unidades sin equipo: por defecto, jugador.
     const team = saved.team === TEAM_ENEMY ? TEAM_ENEMY : TEAM_PLAYER;
-    const unit = createUnit(saved.x, saved.y, team);
+    const unit = createUnit(saved.x, saved.y, team, saved.type || "soldier");
+    unit.wave = Boolean(saved.wave);
     unit.maxHp = Number.isFinite(saved.maxHp) ? saved.maxHp : unit.maxHp;
     unit.hp = Number.isFinite(saved.hp) ? saved.hp : unit.maxHp;
     unit.carrying = saved.carrying || 0;
     unit.cooldown = saved.cooldown || 0;
     unit.gatherOrder = Boolean(saved.gatherOrder);
     units.push(unit);
+  }
+
+  // Las oleadas guardadas vuelven a buscar su objetivo.
+  for (const unit of units) {
+    if (unit.team === TEAM_ENEMY && unit.wave) {
+      unit.attackTarget = findNearestOpponent(unit, Infinity);
+    }
   }
 
   // Edificios: se reconstruyen desde cero (el campamento conserva su objeto).
@@ -1341,6 +1628,67 @@ function loadGame() {
   updateFog();
   clampCamera();
   showToast("Partida cargada");
+}
+
+// Empieza una partida nueva con la dificultad indicada, sin recargar la página.
+function startNewGame(difficulty = "normal") {
+  const preset = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
+
+  gameState.scene = "playing";
+  gameState.paused = false;
+  gameState.difficulty = difficulty;
+  gameState.victory = false;
+  gameState.defeat = false;
+
+  stockpile.wood = preset.wood;
+
+  tree.wood = WOOD_PER_TREE;
+  tree.depleted = false;
+
+  units.length = 0;
+  for (const [x, y] of START_POSITIONS) {
+    units.push(createUnit(x, y, TEAM_PLAYER));
+  }
+
+  buildings.length = 0;
+  obstacles.length = 0;
+  obstacles.push(tree);
+
+  camp.alive = true;
+  camp.hp = camp.maxHp;
+  camp.spawnTimer = 0;
+  buildings.push(camp);
+  obstacles.push(camp);
+
+  depot.hp = depot.maxHp;
+  buildings.push(depot);
+  obstacles.push(depot);
+
+  waveState.number = 0;
+  waveState.timer = preset.firstWave;
+
+  fog.explored.fill(0);
+  fog.visible.fill(0);
+  updateFog();
+
+  clearSelection();
+  buildMode.active = false;
+  drag.active = false;
+  effects.length = 0;
+  mouse.inside = false;
+  fogTimer = 0;
+
+  controlGroups.forEach((group) => {
+    group.length = 0;
+  });
+  lastClick = { type: null, time: -1, x: -999, y: -999 };
+
+  camera.x = 200;
+  camera.y = 150;
+  camera.zoom = 1;
+  clampCamera();
+
+  toast.time = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -1597,14 +1945,19 @@ function spawnEnemy() {
 function updateWaves(dt) {
   if (gameState.victory || gameState.defeat || !camp.alive) return;
 
+  const preset = DIFFICULTIES[gameState.difficulty] || DIFFICULTIES.normal;
+
   waveState.timer -= dt;
   if (waveState.timer > 0) return;
 
   waveState.number += 1;
-  waveState.timer = WAVE_INTERVAL;
+  waveState.timer = preset.waveInterval;
 
   const livingEnemies = units.filter((unit) => unit.team === TEAM_ENEMY).length;
-  const desired = Math.min(8, 1 + Math.ceil(waveState.number / 2));
+  const desired = Math.min(
+    8,
+    preset.waveBase + Math.floor((waveState.number - 1) * preset.waveGrowth)
+  );
   const count = Math.min(desired, Math.max(0, WAVE_MAX_LIVE - livingEnemies));
 
   for (let i = 0; i < count; i++) {
@@ -1614,6 +1967,9 @@ function updateWaves(dt) {
   if (count > 0) {
     showToast(`¡Oleada ${waveState.number}!`);
     playSound("wave");
+
+    // Autoguardado al empezar cada oleada: si cierras, puedes continuar.
+    saveGame(AUTOSAVE_KEY, true);
   }
 }
 
@@ -1621,8 +1977,13 @@ function spawnWaveEnemy() {
   const spot = findSpawnSpot(camp);
   if (!spot) return false;
 
+  const preset = DIFFICULTIES[gameState.difficulty] || DIFFICULTIES.normal;
+
   const enemy = createUnit(spot.x, spot.y, TEAM_ENEMY);
   enemy.wave = true;
+  enemy.maxHp = Math.round(ENEMY_MAX_HP * preset.enemyHp);
+  enemy.hp = enemy.maxHp;
+  enemy.damage = Math.round(ENEMY_DAMAGE * preset.enemyDamage);
   enemy.attackTarget = findNearestOpponent(enemy, Infinity);
   units.push(enemy);
   return true;
@@ -1651,6 +2012,50 @@ window.addEventListener("keydown", (event) => {
   if (event.key.startsWith("Arrow")) {
     event.preventDefault();                 // las flechas no deben hacer scroll
   }
+
+  if (gameState.scene === "menu") {
+    if (event.key === "1") startNewGame("easy");
+    else if (event.key === "2") startNewGame("normal");
+    else if (event.key === "3") startNewGame("hard");
+    return;
+  }
+
+  if (event.key.toLowerCase() === "p" && !event.repeat) {
+    togglePause();
+  }
+
+  if (
+    event.key.toLowerCase() === "m" &&
+    !event.repeat &&
+    !gameState.victory &&
+    !gameState.defeat
+  ) {
+    goToMenu();
+  }
+
+  if (gameState.paused) return;
+
+  // Espacio: centrar la vista en la base.
+  if (event.key === " ") {
+    event.preventDefault();
+    centerOnBase();
+    return;
+  }
+
+  // 1…9: grupos de control (Ctrl para guardar el grupo actual).
+  const groupNumber = Number(event.key);
+  if (groupNumber >= 1 && groupNumber <= 9) {
+    event.preventDefault();
+
+    if (event.ctrlKey || event.metaKey) {
+      controlGroups[groupNumber - 1] = selectedUnits();
+      showToast(`Grupo ${groupNumber} guardado`);
+    } else {
+      selectControlGroup(groupNumber - 1);
+    }
+    return;
+  }
+
   if (event.key === "Escape") {
     if (buildMode.active) {
       cancelBuildMode();
@@ -1668,7 +2073,7 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (
-    (gameState.victory || gameState.defeat) &&
+    (gameState.victory || gameState.defeat || gameState.paused) &&
     event.key.toLowerCase() === "r" &&
     !event.repeat
   ) {
@@ -1697,6 +2102,12 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;           // solo el botón izquierdo
   const p = pointerPosition(event);
 
+  // Menú principal: elegir dificultad o continuar.
+  if (gameState.scene === "menu") {
+    handleMenuClick(p.screenX, p.screenY);
+    return;
+  }
+
   // Botones de guardado, arriba a la derecha.
   const toolbar = toolbarButtons();
   if (pointInRect(p.screenX, p.screenY, toolbar.sound)) {
@@ -1711,6 +2122,9 @@ canvas.addEventListener("mousedown", (event) => {
     loadGame();
     return;
   }
+
+  // En pausa solo funcionan los botones de arriba.
+  if (gameState.paused) return;
 
   // Minimapa: centra la cámara donde se hace clic.
   if (minimapClick(p.screenX, p.screenY)) return;
@@ -1762,6 +2176,9 @@ window.addEventListener("mouseup", (event) => {
 
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();                   // quitar el menú contextual del navegador
+
+  if (gameState.scene === "menu" || gameState.paused) return;
+
   const p = pointerPosition(event);
 
   if (gameState.victory || gameState.defeat) return;   // partida terminada
@@ -1773,7 +2190,7 @@ canvas.addEventListener("contextmenu", (event) => {
   }
 
   if (p.screenY >= canvas.height - HUD_HEIGHT) return;   // clic en la interfaz
-  issueMoveOrder(p.x, p.y);
+  issueMoveOrder(p.x, p.y, event.shiftKey);
 });
 
 // Seguimiento del ratón, para el scroll cuando se acerca a los bordes.
@@ -1795,6 +2212,8 @@ canvas.addEventListener("mouseleave", () => {
 // Rueda del ratón: zoom manteniendo el punto del mundo bajo el cursor.
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
+
+  if (gameState.scene !== "playing" || gameState.paused) return;
 
   const before = pointerPosition(event);
   const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
@@ -1879,6 +2298,8 @@ function clampCamera() {
 }
 
 function update(dt) {
+  if (gameState.scene !== "playing" || gameState.paused) return;
+
   elapsed += dt;
 
   // A velocidad constante en pantalla: con zoom alejado la cámara recorre más
@@ -2670,6 +3091,11 @@ function drawHudButton(rect, label, cost, enabled) {
 }
 
 function render() {
+  if (gameState.scene === "menu") {
+    drawMenu();
+    return;
+  }
+
   // Borrar y pintar el fondo (en coordenadas de pantalla)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -2703,6 +3129,7 @@ function render() {
   drawToast();
   drawVictory();
   drawDefeat();
+  drawPause();
 }
 
 // ---------------------------------------------------------------------
