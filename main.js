@@ -1,7 +1,7 @@
 // =====================================================================
-// Mi primer RTS — Sesión 14
-// Oleadas, arqueros y torres, niebla de guerra con minimapa, guardado,
-// sonido y pulido visual.
+// Mi primer RTS — Sesión 15
+// Menú con dificultad, pausa, autoguardado, grupos de control, doble clic,
+// cola de órdenes y centrado en la base.
 // =====================================================================
 
 // 1. Canvas y pincel

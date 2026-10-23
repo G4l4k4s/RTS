@@ -43,13 +43,14 @@ más grandes. Si te quedas sin unidades y sin edificios, pierdes.
 
 ## Bucle de juego
 
-1. Selecciona las seis unidades y mándalas a talar el árbol (300 de madera).
-2. Cada viaje lleva 10 de madera al **centro de mando**. La madera solo cuenta
+1. Elige dificultad en el menú. En Fácil empiezas con 100 de madera extra.
+2. Selecciona las seis unidades y mándalas a talar el árbol (300 de madera).
+3. Cada viaje lleva 10 de madera al **centro de mando**. La madera solo cuenta
    cuando se entrega.
-3. Con 150 de madera construye un **cuartel**; con 100, una **torre**.
-4. El cuartel entrena **soldados** (50, cuerpo a cuerpo) y **arqueros**
+4. Con 150 de madera construye un **cuartel**; con 100, una **torre**.
+5. El cuartel entrena **soldados** (50, cuerpo a cuerpo) y **arqueros**
    (60, más frágiles pero con mucho alcance).
-5. Aguanta las oleadas, explora con la niebla y destruye el campamento enemigo.
+6. Aguanta las oleadas, explora con la niebla y destruye el campamento enemigo.
 
 ## Sistemas
 
