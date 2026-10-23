@@ -486,13 +486,17 @@ function update(dt) {
 // ---------------------------------------------------------------------
 
 function drawTree() {
+  // Pasar del mundo a la pantalla: sin esto el árbol se dibuja fuera del canvas.
+  const screenX = tree.x - camera.x;
+  const screenY = tree.y - camera.y;
+
   // Tronco
   ctx.fillStyle = "#8b5a2b";
-  ctx.fillRect(tree.x + tree.size * 0.35, tree.y + tree.size * 0.5, tree.size * 0.3, tree.size * 0.5);
+  ctx.fillRect(screenX + tree.size * 0.35, screenY + tree.size * 0.5, tree.size * 0.3, tree.size * 0.5);
   // Copa
   ctx.fillStyle = "#2f6b3d";
   ctx.beginPath();
-  ctx.arc(tree.x + tree.size / 2, tree.y + tree.size / 2, tree.size * 0.5, 0, Math.PI * 2);
+  ctx.arc(screenX + tree.size / 2, screenY + tree.size / 2, tree.size * 0.5, 0, Math.PI * 2);
   ctx.fill();
 }
 
