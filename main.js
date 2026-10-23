@@ -1,6 +1,7 @@
 // =====================================================================
-// Mi primer RTS — Sesión 4
-// Selección con caja de arrastre y órdenes de movimiento con clic derecho.
+// Mi primer RTS — Sesión 5
+// Talar el árbol y llevar la madera al HUD, cámara con zoom y scroll en los
+// bordes, y colisiones entre unidades.
 // =====================================================================
 
 // 1. Canvas y pincel
@@ -8,26 +9,35 @@ const canvas = document.getElementById("game");   // Elemento canvas del DOM
 const ctx = canvas.getContext("2d");              // Contexto 2D para dibujar
 
 // 2. Configuración del mundo
-const camera = { x: 200, y: 150 };                // Esquina superior izquierda de la vista
+const camera = { x: 200, y: 150, zoom: 1 };       // Vista: esquina superior izquierda y zoom
+const MIN_ZOOM = 0.75;                            // Cuánto se puede alejar la cámara
+const MAX_ZOOM = 1.6;                             // Cuánto se puede acercar
 const TILE_SIZE = 100;                            // Tamaño de cada celda de la cuadrícula
 const world = { width: 1600, height: 1200 };      // Tamaño del mundo en píxeles
 
 const CAMERA_SPEED = 400;                         // Píxeles por segundo que se mueve la cámara
+const EDGE_SCROLL_MARGIN = 24;                    // Distancia al borde que activa el scroll
 const UNIT_SPEED = 160;                           // Píxeles por segundo que camina una unidad
+const UNIT_SIZE = 40;                             // Lado del cuadrado de cada unidad
 const EFFECT_DURATION = 0.6;                      // Segundos que dura el círculo que marca el destino
+
+const GATHER_RATE = 12;                           // Madera por segundo que extrae cada unidad
+const WOOD_PER_TREE = 300;                        // Madera que guarda un árbol
+const HUD_HEIGHT = 64;                            // Alto de la barra de interfaz
 
 // Cada unidad guarda su ruta (path) y su destino actual (dest):
 // null = quieta; { x, y } = caminando hacia allí.
 const units = [
-  { x: 600, y: 400, size: 40, selected: false, dest: null },
-  { x: 660, y: 400, size: 40, selected: false, dest: null },
-  { x: 720, y: 400, size: 40, selected: false, dest: null },
-  { x: 600, y: 460, size: 40, selected: false, dest: null },
-  { x: 660, y: 460, size: 40, selected: false, dest: null },
-  { x: 720, y: 460, size: 40, selected: false, dest: null },
+  { x: 600, y: 400, size: UNIT_SIZE, selected: false, dest: null },
+  { x: 660, y: 400, size: UNIT_SIZE, selected: false, dest: null },
+  { x: 720, y: 400, size: UNIT_SIZE, selected: false, dest: null },
+  { x: 600, y: 460, size: UNIT_SIZE, selected: false, dest: null },
+  { x: 660, y: 460, size: UNIT_SIZE, selected: false, dest: null },
+  { x: 720, y: 460, size: UNIT_SIZE, selected: false, dest: null },
 ];
 
-const tree = { x: 900, y: 500, size: 60 };        // Árbol (será un recurso más adelante)
+const tree = { x: 900, y: 500, size: 60, wood: WOOD_PER_TREE, maxWood: WOOD_PER_TREE, depleted: false }; // Árbol: da madera
+const stockpile = { wood: 0 };                    // Recursos del jugador
 
 // Rectángulos que bloquean el paso. De momento solo el árbol; cuando haya
 // edificios, bastará con añadirlos a esta lista.
@@ -56,6 +66,11 @@ const drag = {
 
 const effects = [];                               // Círculos que marcan a dónde se dio la orden
 
+// Estado del ratón, para el scroll cuando se acerca a los bordes.
+const mouse = { screenX: 0, screenY: 0, inside: false };
+
+let elapsed = 0;                                  // Tiempo de juego acumulado (para animaciones)
+
 // ---------------------------------------------------------------------
 // 3. Utilidades geométricas
 // ---------------------------------------------------------------------
@@ -68,7 +83,16 @@ function pointerPosition(event) {
   const scaleY = canvas.height / rect.height;
   const screenX = (event.clientX - rect.left) * scaleX;
   const screenY = (event.clientY - rect.top) * scaleY;
-  return { screenX, screenY, x: screenX + camera.x, y: screenY + camera.y };
+  const point = screenToWorld(screenX, screenY);
+  return { screenX, screenY, x: point.x, y: point.y };
+}
+
+// Pasa un punto de la pantalla a coordenadas del mundo (teniendo en cuenta el zoom).
+function screenToWorld(screenX, screenY) {
+  return {
+    x: screenX / camera.zoom + camera.x,
+    y: screenY / camera.zoom + camera.y,
+  };
 }
 
 // ¿Se solapan dos rectángulos { x, y, w, h }?
@@ -158,15 +182,13 @@ function selectedUnits() {
 
 // Caja de selección actual, ya convertida al mundo.
 function selectionBox() {
-  const x1 = drag.startScreenX + camera.x;
-  const y1 = drag.startScreenY + camera.y;
-  const x2 = drag.endScreenX + camera.x;
-  const y2 = drag.endScreenY + camera.y;
+  const start = screenToWorld(drag.startScreenX, drag.startScreenY);
+  const end = screenToWorld(drag.endScreenX, drag.endScreenY);
   return {
-    x: Math.min(x1, x2),
-    y: Math.min(y1, y2),
-    w: Math.abs(x2 - x1),
-    h: Math.abs(y2 - y1),
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    w: Math.abs(end.x - start.x),
+    h: Math.abs(end.y - start.y),
   };
 }
 
@@ -175,7 +197,8 @@ function finishDrag() {
   if (!drag.moved) {
     // Fue un clic: seleccionar la unidad bajo el cursor.
     if (!drag.additive) clearSelection();
-    const hit = unitAt(drag.startScreenX + camera.x, drag.startScreenY + camera.y);
+    const click = screenToWorld(drag.startScreenX, drag.startScreenY);
+    const hit = unitAt(click.x, click.y);
     if (hit) hit.selected = true;
     return;
   }
@@ -302,6 +325,20 @@ function issueMoveOrder(worldX, worldY) {
   const selected = selectedUnits();
   if (selected.length === 0) return;
 
+  // Si el clic cae sobre el árbol, la orden es talar en vez de moverse.
+  const treeRect = { x: tree.x, y: tree.y, w: tree.size, h: tree.size };
+  if (!tree.depleted && pointInRect(worldX, worldY, treeRect)) {
+    orderGather(selected);
+    effects.push({ x: worldX, y: worldY, age: 0, color: "#8fce6b" });
+    return;
+  }
+
+  // Al moverse, se cancela cualquier tala en curso.
+  for (const unit of selected) {
+    unit.gathering = false;
+    unit.gatherOrder = false;
+  }
+
   const spacing = 48;                                    // separación entre unidades
   const columns = Math.ceil(Math.sqrt(selected.length)); // formación lo más cuadrada posible
   const rows = Math.ceil(selected.length / columns);
@@ -327,6 +364,54 @@ function issueMoveOrder(worldX, worldY) {
   });
 
   effects.push({ x: worldX, y: worldY, age: 0 });
+}
+
+// Huecos alrededor del árbol donde se colocan las unidades que talan:
+// ocho posiciones, en las cuatro caras y en las cuatro esquinas.
+function gatherSlots(node) {
+  const gap = node.size / 2 + UNIT_SIZE / 2 + 4;    // distancia del centro al centro
+  const offsets = [
+    { x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 },
+    { x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: 1, y: 1 },
+  ];
+
+  return offsets.map((offset) => ({
+    x: node.x + node.size / 2 + offset.x * gap - UNIT_SIZE / 2,
+    y: node.y + node.size / 2 + offset.y * gap - UNIT_SIZE / 2,
+  }));
+}
+
+// Manda a las unidades a talar: cada una recibe el hueco libre más cercano.
+function orderGather(selected) {
+  const freeSlots = gatherSlots(tree);
+
+  // Las unidades más cercanas eligen primero, para repartir mejor los huecos.
+  const ordered = [...selected].sort((a, b) => {
+    const da = Math.hypot(a.x - tree.x, a.y - tree.y);
+    const db = Math.hypot(b.x - tree.x, b.y - tree.y);
+    return da - db;
+  });
+
+  for (const unit of ordered) {
+    if (freeSlots.length === 0) break;             // más unidades que huecos
+
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    freeSlots.forEach((slot, index) => {
+      const distance = Math.hypot(slot.x - unit.x, slot.y - unit.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    const slot = freeSlots.splice(bestIndex, 1)[0];
+    unit.gatherOrder = true;
+    unit.gathering = false;
+    unit.path = buildRoute(unit, slot);
+    unit.dest = unit.path[0];
+    unit.stuckTime = 0;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -355,12 +440,14 @@ window.addEventListener("blur", () => {
     keys[key] = false;
   }
   drag.active = false;
+  mouse.inside = false;
 });
 
 // 6.2. Ratón
 canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;           // solo el botón izquierdo
   const p = pointerPosition(event);
+  if (p.screenY >= canvas.height - HUD_HEIGHT) return;   // clic en la interfaz, no en el mapa
   drag.active = true;
   drag.additive = event.shiftKey;
   drag.moved = false;
@@ -393,8 +480,36 @@ window.addEventListener("mouseup", (event) => {
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();                   // quitar el menú contextual del navegador
   const p = pointerPosition(event);
+  if (p.screenY >= canvas.height - HUD_HEIGHT) return;   // clic en la interfaz
   issueMoveOrder(p.x, p.y);
 });
+
+// Seguimiento del ratón, para el scroll cuando se acerca a los bordes.
+canvas.addEventListener("mousemove", (event) => {
+  const p = pointerPosition(event);
+  mouse.screenX = p.screenX;
+  mouse.screenY = p.screenY;
+  mouse.inside = true;
+});
+
+canvas.addEventListener("mouseleave", () => {
+  mouse.inside = false;
+});
+
+// Rueda del ratón: zoom manteniendo el punto del mundo bajo el cursor.
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+
+  const before = pointerPosition(event);
+  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, camera.zoom * factor));
+  if (zoom === camera.zoom) return;
+
+  camera.zoom = zoom;
+  camera.x = before.x - before.screenX / zoom;
+  camera.y = before.y - before.screenY / zoom;
+  clampCamera();
+}, { passive: false });
 
 // ---------------------------------------------------------------------
 // 7. Actualizar el estado
@@ -419,6 +534,11 @@ function updateUnit(unit, dt) {
     // Puede quedar otra parada en la ruta (la esquina del obstáculo).
     unit.path.shift();
     unit.dest = unit.path.length > 0 ? unit.path[0] : null;
+
+    // Si venía a talar y ya está en su hueco, empieza a trabajar.
+    if (!unit.dest && unit.gatherOrder && !tree.depleted) {
+      unit.gathering = true;
+    }
     return;
   }
 
@@ -452,22 +572,67 @@ function updateUnit(unit, dt) {
   }
 }
 
-function update(dt) {
-  // Cámara
-  if (keys["w"] || keys["arrowup"]) camera.y -= CAMERA_SPEED * dt;
-  if (keys["s"] || keys["arrowdown"]) camera.y += CAMERA_SPEED * dt;
-  if (keys["a"] || keys["arrowleft"]) camera.x -= CAMERA_SPEED * dt;
-  if (keys["d"] || keys["arrowright"]) camera.x += CAMERA_SPEED * dt;
-
-  // Límites del mundo
-  const maxX = world.width - canvas.width;
-  const maxY = world.height - canvas.height;
+function clampCamera() {
+  // La vista útil es el canvas menos la barra de interfaz de abajo.
+  const viewWidth = canvas.width / camera.zoom;
+  const viewHeight = (canvas.height - HUD_HEIGHT) / camera.zoom;
+  const maxX = Math.max(0, world.width - viewWidth);
+  const maxY = Math.max(0, world.height - viewHeight);
   camera.x = Math.max(0, Math.min(camera.x, maxX));
   camera.y = Math.max(0, Math.min(camera.y, maxY));
+}
+
+function update(dt) {
+  elapsed += dt;
+
+  // A velocidad constante en pantalla: con zoom alejado la cámara recorre más
+  // mundo por segundo, y al acercarse menos, para que se sienta igual.
+  const cameraStep = (CAMERA_SPEED / camera.zoom) * dt;
+
+  // Cámara con el teclado
+  if (keys["w"] || keys["arrowup"]) camera.y -= cameraStep;
+  if (keys["s"] || keys["arrowdown"]) camera.y += cameraStep;
+  if (keys["a"] || keys["arrowleft"]) camera.x -= cameraStep;
+  if (keys["d"] || keys["arrowright"]) camera.x += cameraStep;
+
+  // Cámara cuando el ratón se acerca al borde de la pantalla
+  if (mouse.inside) {
+    const viewBottom = canvas.height - HUD_HEIGHT;
+
+    if (mouse.screenX < EDGE_SCROLL_MARGIN) camera.x -= cameraStep;
+    if (mouse.screenX > canvas.width - EDGE_SCROLL_MARGIN) camera.x += cameraStep;
+    if (mouse.screenY < EDGE_SCROLL_MARGIN) camera.y -= cameraStep;
+    if (mouse.screenY > viewBottom - EDGE_SCROLL_MARGIN && mouse.screenY < viewBottom) {
+      camera.y += cameraStep;
+    }
+  }
+
+  clampCamera();
 
   // Unidades
   for (const unit of units) {
     updateUnit(unit, dt);
+  }
+
+  // Que no se pisen entre ellas
+  separateUnits();
+
+  // Tala: cada unidad que trabaja va sacando madera del árbol.
+  for (const unit of units) {
+    if (!unit.gathering) continue;
+    if (tree.depleted || tree.wood <= 0) {
+      unit.gathering = false;
+      unit.gatherOrder = false;
+      continue;
+    }
+
+    const amount = Math.min(GATHER_RATE * dt, tree.wood);
+    tree.wood -= amount;
+    stockpile.wood += amount;
+
+    if (tree.wood <= 0) {
+      depleteTree();
+    }
   }
 
   // Efectos (el círculo del destino se va apagando)
@@ -481,48 +646,148 @@ function update(dt) {
   }
 }
 
+// Cuando el árbol se queda sin madera: pasa a ser un tocón y deja de estorbar.
+function depleteTree() {
+  if (tree.depleted) return;
+  tree.depleted = true;
+  tree.wood = 0;
+
+  // Ya no bloquea el paso: se puede caminar por encima del tocón.
+  const index = obstacles.indexOf(tree);
+  if (index !== -1) obstacles.splice(index, 1);
+
+  for (const unit of units) {
+    unit.gathering = false;
+    unit.gatherOrder = false;
+  }
+}
+
+// Empuja las unidades que se solapan para que no se pisen. Solo se separan
+// las que están quietas: mientras caminan pueden cruzarse, y así no se
+// bloquean al compartir la misma esquina de una ruta.
+function separateUnits() {
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < units.length; i++) {
+      for (let j = i + 1; j < units.length; j++) {
+        const a = units[i];
+        const b = units[j];
+        if (a.dest || b.dest) continue;
+        separatePair(a, b);
+      }
+    }
+  }
+}
+
+function separatePair(a, b) {
+  const overlapX = Math.min(a.x + a.size, b.x + b.size) - Math.max(a.x, b.x);
+  const overlapY = Math.min(a.y + a.size, b.y + b.size) - Math.max(a.y, b.y);
+  if (overlapX <= 0 || overlapY <= 0) return;
+
+  // Separarlas por el eje en el que se solapan menos.
+  if (overlapX < overlapY) {
+    const push = overlapX / 2 + 0.5;
+    const direction = a.x < b.x ? 1 : -1;
+    pushApart(a, -push * direction, 0);
+    pushApart(b, push * direction, 0);
+  } else {
+    const push = overlapY / 2 + 0.5;
+    const direction = a.y < b.y ? 1 : -1;
+    pushApart(a, 0, -push * direction);
+    pushApart(b, 0, push * direction);
+  }
+}
+
+// Mueve una unidad solo si la posición de destino es válida.
+function pushApart(unit, dx, dy) {
+  if (canStand(unit, unit.x + dx, unit.y + dy)) {
+    unit.x += dx;
+    unit.y += dy;
+  }
+}
+
 // ---------------------------------------------------------------------
 // 8. Dibujar
 // ---------------------------------------------------------------------
 
+// La cuadrícula se dibuja en coordenadas del mundo: la transformación del
+// render ya le aplica la cámara y el zoom.
+function drawGrid() {
+  ctx.strokeStyle = "#3a5a42";
+  ctx.lineWidth = 1 / camera.zoom;
+
+  for (let x = 0; x <= world.width; x += TILE_SIZE) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, world.height);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y <= world.height; y += TILE_SIZE) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(world.width, y);
+    ctx.stroke();
+  }
+}
+
 function drawTree() {
-  // Pasar del mundo a la pantalla: sin esto el árbol se dibuja fuera del canvas.
-  const screenX = tree.x - camera.x;
-  const screenY = tree.y - camera.y;
+  if (tree.depleted) {
+    // Tocón: el árbol ya se taló.
+    ctx.fillStyle = "#6b4a24";
+    ctx.fillRect(tree.x + tree.size * 0.2, tree.y + tree.size * 0.55, tree.size * 0.6, tree.size * 0.3);
+    return;
+  }
 
   // Tronco
   ctx.fillStyle = "#8b5a2b";
-  ctx.fillRect(screenX + tree.size * 0.35, screenY + tree.size * 0.5, tree.size * 0.3, tree.size * 0.5);
+  ctx.fillRect(tree.x + tree.size * 0.35, tree.y + tree.size * 0.5, tree.size * 0.3, tree.size * 0.5);
+
   // Copa
   ctx.fillStyle = "#2f6b3d";
   ctx.beginPath();
-  ctx.arc(screenX + tree.size / 2, screenY + tree.size / 2, tree.size * 0.5, 0, Math.PI * 2);
+  ctx.arc(tree.x + tree.size / 2, tree.y + tree.size / 2, tree.size * 0.5, 0, Math.PI * 2);
   ctx.fill();
+
+  // Barra con la madera que le queda
+  const ratio = tree.wood / tree.maxWood;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillRect(tree.x, tree.y - 14, tree.size, 8);
+  ctx.fillStyle = "#8fce6b";
+  ctx.fillRect(tree.x, tree.y - 14, tree.size * ratio, 8);
 }
 
 function drawEffects() {
   for (const effect of effects) {
     const t = effect.age / EFFECT_DURATION;            // 0 al empezar, 1 al desaparecer
     ctx.beginPath();
-    ctx.arc(effect.x - camera.x, effect.y - camera.y, 6 + t * 26, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(251, 191, 36, ${1 - t})`;
-    ctx.lineWidth = 2;
+    ctx.arc(effect.x, effect.y, 6 + t * 26, 0, Math.PI * 2);
+    ctx.strokeStyle = effect.color || "#fbbf24";
+    ctx.globalAlpha = 1 - t;
+    ctx.lineWidth = 2 / camera.zoom;
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 }
 
 function drawUnits() {
   for (const unit of units) {
-    const screenX = unit.x - camera.x;
-    const screenY = unit.y - camera.y;
-
     ctx.fillStyle = unit.selected ? "#fbbf24" : "#3b82f6";
-    ctx.fillRect(screenX, screenY, unit.size, unit.size);
+    ctx.fillRect(unit.x, unit.y, unit.size, unit.size);
 
     if (unit.selected) {
       ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(screenX, screenY, unit.size, unit.size);
+      ctx.lineWidth = 2 / camera.zoom;
+      ctx.strokeRect(unit.x, unit.y, unit.size, unit.size);
+    }
+
+    if (unit.gathering) {
+      // Arco que se balancea como un hacha mientras trabaja
+      const swing = Math.sin(elapsed * 10) * 0.8;
+      ctx.strokeStyle = "#8fce6b";
+      ctx.lineWidth = 2 / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(unit.x + unit.size / 2, unit.y - 6, 6, -Math.PI / 2 + swing, Math.PI / 2 + swing);
+      ctx.stroke();
     }
   }
 }
@@ -545,53 +810,64 @@ function drawSelectionBox() {
   ctx.setLineDash([]);                                // no dejar el trazo discontinuo para lo siguiente
 }
 
+function drawHud() {
+  const top = canvas.height - HUD_HEIGHT;
+
+  ctx.fillStyle = "rgba(8, 12, 16, 0.88)";
+  ctx.fillRect(0, top, canvas.width, HUD_HEIGHT);
+
+  ctx.strokeStyle = "#2c3a33";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, top + 0.5);
+  ctx.lineTo(canvas.width, top + 0.5);
+  ctx.stroke();
+
+  // Madera
+  ctx.fillStyle = "#8b5a2b";
+  ctx.fillRect(16, top + 22, 20, 20);
+  ctx.strokeStyle = "#c98a4b";
+  ctx.strokeRect(16.5, top + 22.5, 19, 19);
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "16px system-ui";
+  ctx.fillText(`Madera: ${Math.floor(stockpile.wood + 1e-9)}`, 46, top + 38);
+
+  // Unidades seleccionadas
+  ctx.fillStyle = "#aab4c0";
+  ctx.fillText(`Seleccionadas: ${selectedUnits().length}`, 220, top + 38);
+
+  // Ayuda
+  ctx.fillStyle = "#7d8794";
+  ctx.font = "13px system-ui";
+  ctx.fillText("Clic derecho: mover · sobre el árbol: talar", 420, top + 37);
+}
+
 function render() {
-  // Borrar el frame anterior
+  // Borrar y pintar el fondo (en coordenadas de pantalla)
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Fondo del mundo
   ctx.fillStyle = "#24382a";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Cuadrícula del mundo
-  ctx.strokeStyle = "#3a5a42";
-  ctx.lineWidth = 1;
+  // Mundo: la cámara se aplica con una transformación. Todo lo que se dibuje
+  // a partir de aquí usa coordenadas del mundo, sin restar la cámara a mano.
+  ctx.setTransform(
+    camera.zoom, 0,
+    0, camera.zoom,
+    -camera.x * camera.zoom, -camera.y * camera.zoom
+  );
 
-  for (let x = 0; x <= world.width; x += TILE_SIZE) {
-    const screenX = x - camera.x;
-    ctx.beginPath();
-    ctx.moveTo(screenX, 0);
-    ctx.lineTo(screenX, canvas.height);
-    ctx.stroke();
-  }
-
-  for (let y = 0; y <= world.height; y += TILE_SIZE) {
-    const screenY = y - camera.y;
-    ctx.beginPath();
-    ctx.moveTo(0, screenY);
-    ctx.lineTo(canvas.width, screenY);
-    ctx.stroke();
-  }
-
-  // Escenario
+  drawGrid();
   drawTree();
   drawEffects();
-
-  // Unidades
   drawUnits();
 
-  // Caja de selección (por encima de todo)
+  // Interfaz: de vuelta a coordenadas de pantalla
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawSelectionBox();
-
-  // Interfaz
-  const count = selectedUnits().length;
-  ctx.fillStyle = "#e8e8e8";
-  ctx.font = "16px system-ui";
-  ctx.fillText(
-    `Cámara: ${Math.round(camera.x)}, ${Math.round(camera.y)} · Seleccionadas: ${count}`,
-    16,
-    24
-  );
+  drawHud();
 }
 
 // ---------------------------------------------------------------------
