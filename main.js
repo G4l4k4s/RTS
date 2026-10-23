@@ -1,7 +1,7 @@
 // =====================================================================
-// Mi primer RTS — Sesión 6
-// Cuartel: se construye gastando madera, entrena unidades y bloquea el paso.
-// Rutas con grafo de esquinas para rodear varios edificios.
+// Mi primer RTS — Sesión 10
+// Combate y campamento enemigo, centro de mando con transporte de madera,
+// rutas suavizadas, guardado y HUD.
 // =====================================================================
 
 // 1. Canvas y pincel
@@ -137,6 +137,10 @@ obstacles.push(depot);
 
 // Estado global de la partida.
 const gameState = { victory: false };
+
+// Guardado en el navegador y aviso flotante.
+const SAVE_KEY = "mi-primer-rts-save";
+const toast = { text: "", time: 0 };
 
 // Separación mínima entre una unidad y un obstáculo cuando se recoloca un
 // destino. Debe ser mayor que el margen de la ruta (paddedRect) para que el
@@ -933,7 +937,160 @@ function canPlaceUnit(x, y) {
 }
 
 // ---------------------------------------------------------------------
-// 5.2. Combate
+// 5.2. Guardar y cargar la partida
+// ---------------------------------------------------------------------
+
+function showToast(text) {
+  toast.text = text;
+  toast.time = 2.5;
+}
+
+function toolbarButtons() {
+  return {
+    save: { x: canvas.width - 176, y: 10, w: 78, h: 26 },
+    load: { x: canvas.width - 92, y: 10, w: 78, h: 26 },
+  };
+}
+
+function saveGame() {
+  try {
+    const data = {
+      version: 1,
+      camera: { x: camera.x, y: camera.y, zoom: camera.zoom },
+      stockpile: { wood: stockpile.wood },
+      tree: { wood: tree.wood, depleted: tree.depleted },
+      victory: gameState.victory,
+      units: units.map((unit) => ({
+        x: unit.x,
+        y: unit.y,
+        team: unit.team,
+        hp: unit.hp,
+        maxHp: unit.maxHp,
+        carrying: unit.carrying,
+        cooldown: unit.cooldown,
+        gatherOrder: unit.gatherOrder,
+      })),
+      buildings: buildings.map((building) => ({
+        type: building.type,
+        team: building.team,
+        x: building.x,
+        y: building.y,
+        size: building.size,
+        hp: building.hp,
+        maxHp: building.maxHp,
+        queue: building.queue || 0,
+        progress: building.progress || 0,
+      })),
+      camp: { alive: camp.alive, spawnTimer: camp.spawnTimer },
+    };
+
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    showToast("Partida guardada");
+  } catch (error) {
+    showToast("No se pudo guardar");
+  }
+}
+
+function loadGame() {
+  let data;
+
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      showToast("No hay partida guardada");
+      return;
+    }
+    data = JSON.parse(raw);
+  } catch (error) {
+    showToast("No se pudo cargar");
+    return;
+  }
+
+  if (!data || data.version !== 1) {
+    showToast("Partida incompatible");
+    return;
+  }
+
+  // Mundo y cámara
+  camera.x = data.camera.x;
+  camera.y = data.camera.y;
+  camera.zoom = data.camera.zoom;
+  stockpile.wood = data.stockpile.wood;
+  tree.wood = data.tree.wood;
+  tree.depleted = data.tree.depleted;
+  gameState.victory = Boolean(data.victory);
+
+  // Unidades
+  units.length = 0;
+  for (const saved of data.units) {
+    const unit = createUnit(saved.x, saved.y, saved.team);
+    unit.hp = saved.hp;
+    unit.maxHp = saved.maxHp;
+    unit.carrying = saved.carrying || 0;
+    unit.cooldown = saved.cooldown || 0;
+    unit.gatherOrder = Boolean(saved.gatherOrder);
+    units.push(unit);
+  }
+
+  // Edificios: se reconstruyen desde cero (el campamento conserva su objeto).
+  buildings.length = 0;
+  obstacles.length = 0;
+  if (!tree.depleted) obstacles.push(tree);
+
+  camp.alive = Boolean(data.camp && data.camp.alive);
+  camp.spawnTimer = data.camp ? data.camp.spawnTimer || 0 : 0;
+  camp.hp = camp.maxHp;
+
+  for (const saved of data.buildings) {
+    if (saved.type === "camp") {
+      camp.hp = saved.hp;
+      camp.maxHp = saved.maxHp;
+      if (camp.alive) {
+        buildings.push(camp);
+        obstacles.push(camp);
+      }
+      continue;
+    }
+
+    const building = {
+      type: saved.type,
+      team: saved.team,
+      x: saved.x,
+      y: saved.y,
+      size: saved.size,
+      hp: saved.hp,
+      maxHp: saved.maxHp,
+      queue: saved.queue || 0,
+      progress: saved.progress || 0,
+    };
+    buildings.push(building);
+    obstacles.push(building);
+  }
+
+  if (camp.alive && !buildings.includes(camp)) {
+    buildings.push(camp);
+    obstacles.push(camp);
+  }
+
+  // Quien llevaba madera al guardar vuelve al centro de mando.
+  for (const unit of units) {
+    if (unit.carrying > 0) {
+      unit.task = { type: "gather", phase: "toDepot", slot: null };
+      goDeposit(unit);
+    }
+  }
+
+  clearSelection();
+  buildMode.active = false;
+  drag.active = false;
+  effects.length = 0;
+  mouse.inside = false;
+  clampCamera();
+  showToast("Partida cargada");
+}
+
+// ---------------------------------------------------------------------
+// 5.3. Combate
 // ---------------------------------------------------------------------
 
 // Distancia desde el borde de la unidad hasta el borde del objetivo.
@@ -1187,6 +1344,17 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;           // solo el botón izquierdo
   const p = pointerPosition(event);
 
+  // Botones de guardado, arriba a la derecha.
+  const toolbar = toolbarButtons();
+  if (pointInRect(p.screenX, p.screenY, toolbar.save)) {
+    saveGame();
+    return;
+  }
+  if (pointInRect(p.screenX, p.screenY, toolbar.load)) {
+    loadGame();
+    return;
+  }
+
   // Clic en la barra inferior: botones del HUD.
   if (p.screenY >= canvas.height - HUD_HEIGHT) {
     handleHudClick(p.screenX, p.screenY);
@@ -1431,6 +1599,10 @@ function update(dt) {
     if (effects[i].age > EFFECT_DURATION) {
       effects.splice(i, 1);
     }
+  }
+
+  if (toast.time > 0) {
+    toast.time = Math.max(0, toast.time - dt);
   }
 }
 
@@ -1792,6 +1964,42 @@ function drawSelectionBox() {
   ctx.setLineDash([]);                                // no dejar el trazo discontinuo para lo siguiente
 }
 
+function drawToolbar() {
+  const buttons = toolbarButtons();
+  drawToolbarButton(buttons.save, "Guardar");
+  drawToolbarButton(buttons.load, "Cargar");
+}
+
+function drawToolbarButton(rect, label) {
+  ctx.fillStyle = "rgba(10, 16, 22, 0.82)";
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  ctx.strokeStyle = "#3a4a5a";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+  ctx.fillStyle = "#cfd6df";
+  ctx.font = "13px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + 17);
+  ctx.textAlign = "left";
+}
+
+function drawToast() {
+  if (toast.time <= 0) return;
+
+  ctx.globalAlpha = Math.min(1, toast.time);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.fillRect(canvas.width / 2 - 110, 48, 220, 32);
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "14px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(toast.text, canvas.width / 2, 69);
+  ctx.textAlign = "left";
+  ctx.globalAlpha = 1;
+}
+
 function drawHud() {
   const top = canvas.height - HUD_HEIGHT;
 
@@ -1886,6 +2094,8 @@ function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawSelectionBox();
   drawHud();
+  drawToolbar();
+  drawToast();
   drawVictory();
 }
 
