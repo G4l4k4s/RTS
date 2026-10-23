@@ -27,21 +27,69 @@ const HUD_HEIGHT = 64;                            // Alto de la barra de interfa
 
 const BARRACKS_COST = 150;                        // Madera que cuesta un cuartel
 const BARRACKS_SIZE = 80;                         // Lado del cuartel
+const BARRACKS_HP = 300;                          // Vida de un cuartel
 const UNIT_COST = 50;                             // Madera que cuesta entrenar una unidad
 const TRAIN_TIME = 4;                             // Segundos que tarda una unidad
 const MAX_QUEUE = 5;                              // Unidades en cola por cuartel
 const MAX_UNITS = 40;                             // Tope de unidades en el mapa
 const BUILD_SNAP = 20;                            // El cuartel se coloca en una rejilla de 20 px
 
-// Cada unidad guarda su ruta (path) y su destino actual (dest):
-// null = quieta; { x, y } = caminando hacia allí.
+// Combate
+const TEAM_PLAYER = "player";
+const TEAM_ENEMY = "enemy";
+
+const UNIT_MAX_HP = 100;                          // Vida de un soldado
+const UNIT_DAMAGE = 12;                           // Daño por golpe
+const UNIT_ATTACK_RANGE = 12;                     // Hueco entre bordes al atacar
+const UNIT_ATTACK_COOLDOWN = 0.8;                 // Segundos entre golpes
+
+const ENEMY_MAX_HP = 80;
+const ENEMY_DAMAGE = 8;
+const ENEMY_ATTACK_RANGE = 12;
+const ENEMY_ATTACK_COOLDOWN = 1.2;
+const ENEMY_AGGRO_RANGE = 320;                    // Hasta dónde persigue un enemigo
+
+const CAMP_HP = 400;                              // Vida del campamento enemigo
+const CAMP_SIZE = 90;
+const CAMP_SPAWN_INTERVAL = 12;                   // Segundos entre guardias
+const CAMP_MAX_GUARDS = 6;
+const CAMP_GUARD_RADIUS = 300;                    // Sólo saca guardias si te acercas
+
+// Crea una unidad del equipo indicado con sus estadísticas de combate.
+function createUnit(x, y, team) {
+  const player = team === TEAM_PLAYER;
+  const hp = player ? UNIT_MAX_HP : ENEMY_MAX_HP;
+
+  return {
+    x,
+    y,
+    size: UNIT_SIZE,
+    team,
+    hp,
+    maxHp: hp,
+    damage: player ? UNIT_DAMAGE : ENEMY_DAMAGE,
+    range: player ? UNIT_ATTACK_RANGE : ENEMY_ATTACK_RANGE,
+    cooldownMax: player ? UNIT_ATTACK_COOLDOWN : ENEMY_ATTACK_COOLDOWN,
+    cooldown: 0,
+    attackTarget: null,
+    repathTimer: 0,
+    selected: false,
+    dest: null,
+    path: [],
+    gathering: false,
+    gatherOrder: false,
+    stuckTime: 0,
+  };
+}
+
+// Las seis unidades con las que empieza el jugador.
 const units = [
-  { x: 600, y: 400, size: UNIT_SIZE, selected: false, dest: null },
-  { x: 660, y: 400, size: UNIT_SIZE, selected: false, dest: null },
-  { x: 720, y: 400, size: UNIT_SIZE, selected: false, dest: null },
-  { x: 600, y: 460, size: UNIT_SIZE, selected: false, dest: null },
-  { x: 660, y: 460, size: UNIT_SIZE, selected: false, dest: null },
-  { x: 720, y: 460, size: UNIT_SIZE, selected: false, dest: null },
+  createUnit(600, 400, TEAM_PLAYER),
+  createUnit(660, 400, TEAM_PLAYER),
+  createUnit(720, 400, TEAM_PLAYER),
+  createUnit(600, 460, TEAM_PLAYER),
+  createUnit(660, 460, TEAM_PLAYER),
+  createUnit(720, 460, TEAM_PLAYER),
 ];
 
 const tree = { x: 900, y: 500, size: 60, wood: WOOD_PER_TREE, maxWood: WOOD_PER_TREE, depleted: false }; // Árbol: da madera
@@ -53,9 +101,26 @@ let selectedBuilding = null;                      // Cuartel seleccionado, si ha
 // Colocación de un edificio nuevo: sigue al ratón hasta hacer clic.
 const buildMode = { active: false, x: 0, y: 0, valid: false };
 
-// Rectángulos que bloquean el paso. De momento solo el árbol; cuando haya
-// edificios, bastará con añadirlos a esta lista.
+// Rectángulos que bloquean el paso: el árbol y los edificios.
 const obstacles = [tree];
+
+// Campamento enemigo: no ataca hasta que te acercas, y entonces saca guardias.
+const camp = {
+  type: "camp",
+  team: TEAM_ENEMY,
+  x: 1380,
+  y: 220,
+  size: CAMP_SIZE,
+  hp: CAMP_HP,
+  maxHp: CAMP_HP,
+  alive: true,
+  spawnTimer: 0,
+};
+buildings.push(camp);
+obstacles.push(camp);
+
+// Estado global de la partida.
+const gameState = { victory: false };
 
 // Separación mínima entre una unidad y un obstáculo cuando se recoloca un
 // destino. Debe ser mayor que el margen de la ruta (paddedRect) para que el
@@ -258,20 +323,22 @@ function finishDrag() {
     const click = screenToWorld(drag.startScreenX, drag.startScreenY);
 
     const building = buildingAt(click.x, click.y);
-    if (building) {
+    if (building && building.team === TEAM_PLAYER) {
       selectedBuilding = building;
       return;
     }
+    if (building) return;          // los edificios enemigos no se seleccionan
 
     const hit = unitAt(click.x, click.y);
-    if (hit) hit.selected = true;
+    if (hit && hit.team === TEAM_PLAYER) hit.selected = true;
     return;
   }
 
-  // Fue una caja: seleccionar todas las unidades que toca.
+  // Fue una caja: seleccionar todas las unidades del jugador que toca.
   if (!drag.additive) clearSelection();
   const box = selectionBox();
   for (const unit of units) {
+    if (unit.team !== TEAM_PLAYER) continue;
     if (rectsOverlap(box, unitRect(unit))) {
       unit.selected = true;
     }
@@ -409,6 +476,21 @@ function buildRoute(unit, target) {
 function issueMoveOrder(worldX, worldY) {
   const selected = selectedUnits();
   if (selected.length === 0) return;
+
+  // Si el clic cae sobre un enemigo (unidad o edificio), la orden es atacar.
+  const clickedUnit = unitAt(worldX, worldY);
+  if (clickedUnit && clickedUnit.team === TEAM_ENEMY) {
+    orderAttack(selected, clickedUnit);
+    effects.push({ x: worldX, y: worldY, age: 0, color: "#f87171" });
+    return;
+  }
+
+  const clickedBuilding = buildingAt(worldX, worldY);
+  if (clickedBuilding && clickedBuilding.team === TEAM_ENEMY) {
+    orderAttack(selected, clickedBuilding);
+    effects.push({ x: worldX, y: worldY, age: 0, color: "#f87171" });
+    return;
+  }
 
   // Si el clic cae sobre el árbol, la orden es talar en vez de moverse.
   const treeRect = { x: tree.x, y: tree.y, w: tree.size, h: tree.size };
@@ -564,9 +646,12 @@ function tryPlaceBuilding() {
 
   const building = {
     type: "barracks",
+    team: TEAM_PLAYER,
     x: buildMode.x,
     y: buildMode.y,
     size: BARRACKS_SIZE,
+    hp: BARRACKS_HP,
+    maxHp: BARRACKS_HP,
     queue: 0,          // unidades esperando en la cola
     progress: 0,       // segundos de la unidad que se está entrenando
   };
@@ -618,10 +703,11 @@ function handleHudClick(screenX, screenY) {
   }
 }
 
-// Avanza la cola de entrenamiento de cada cuartel.
+// Avanza la cola de entrenamiento de cada cuartel del jugador.
 function updateBuildings(dt) {
   for (const building of buildings) {
-    if (building.queue <= 0) continue;
+    if (building.type !== "barracks" || building.team !== TEAM_PLAYER) continue;
+    if (!building.queue || building.queue <= 0) continue;
 
     building.progress += dt;
     if (building.progress < TRAIN_TIME) continue;
@@ -685,6 +771,217 @@ function canPlaceUnit(x, y) {
     if (rectsOverlap(box, unitRect(unit))) return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------
+// 5.2. Combate
+// ---------------------------------------------------------------------
+
+// Distancia desde el borde de la unidad hasta el borde del objetivo.
+function distanceToTarget(unit, target) {
+  const ux = unit.x + unit.size / 2;
+  const uy = unit.y + unit.size / 2;
+  const tx = target.x + target.size / 2;
+  const ty = target.y + target.size / 2;
+  const centerDistance = Math.hypot(tx - ux, ty - uy);
+  return Math.max(0, centerDistance - unit.size / 2 - target.size / 2);
+}
+
+// ¿Sigue existiendo el objetivo? (una unidad muerta sale del array)
+function isAliveTarget(target) {
+  if (!target || target.hp <= 0) return false;
+  return units.includes(target) || buildings.includes(target);
+}
+
+// El enemigo vivo más cercano (unidad o edificio del otro equipo).
+function findNearestOpponent(unit, maxDistance) {
+  let best = null;
+  let bestDistance = maxDistance;
+
+  for (const other of units) {
+    if (other.team === unit.team || other.hp <= 0) continue;
+    const distance = distanceToTarget(unit, other);
+    if (distance < bestDistance) {
+      best = other;
+      bestDistance = distance;
+    }
+  }
+
+  for (const building of buildings) {
+    if (building.team === unit.team || building.hp <= 0) continue;
+    const distance = distanceToTarget(unit, building);
+    if (distance < bestDistance) {
+      best = building;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
+// Punto junto al objetivo al que la unidad se acerca para atacar.
+function approachSpot(unit, target) {
+  const ux = unit.x + unit.size / 2;
+  const uy = unit.y + unit.size / 2;
+  const tx = target.x + target.size / 2;
+  const ty = target.y + target.size / 2;
+  const angle = Math.atan2(uy - ty, ux - tx);
+  const distance = target.size / 2 + unit.size / 2 + 6;
+
+  return clampDestination(
+    unit,
+    tx + Math.cos(angle) * distance - unit.size / 2,
+    ty + Math.sin(angle) * distance - unit.size / 2
+  );
+}
+
+// Da la orden de atacar a las unidades seleccionadas.
+function orderAttack(selected, target) {
+  for (const unit of selected) {
+    unit.attackTarget = target;
+    unit.gatherOrder = false;
+    unit.gathering = false;
+    unit.dest = null;
+    unit.path = [];
+    unit.stuckTime = 0;
+    unit.repathTimer = 0;
+  }
+}
+
+// Decide cada unidad: buscar objetivo, acercarse o golpear.
+function updateCombat(unit, dt) {
+  unit.cooldown = Math.max(0, unit.cooldown - dt);
+
+  let target = unit.attackTarget;
+  if (target && !isAliveTarget(target)) {
+    unit.attackTarget = null;
+    target = null;
+  }
+
+  // Los enemigos buscan al jugador a cierta distancia; las unidades del
+  // jugador sólo responden a enemigos que ya estén a tiro.
+  if (!target && !unit.dest) {
+    const searchRange = unit.team === TEAM_ENEMY ? ENEMY_AGGRO_RANGE : unit.range + 10;
+    target = findNearestOpponent(unit, searchRange);
+    if (target) {
+      unit.attackTarget = target;
+    }
+  }
+
+  if (!target) return;
+
+  if (distanceToTarget(unit, target) > unit.range) {
+    // Acercarse, recalculando la ruta cada poco porque el objetivo se mueve.
+    unit.repathTimer -= dt;
+    if (!unit.dest || unit.repathTimer <= 0) {
+      const spot = approachSpot(unit, target);
+      unit.path = buildRoute(unit, spot);
+      unit.dest = unit.path[0];
+      unit.repathTimer = 0.4;
+    }
+    return;
+  }
+
+  // En rango: pararse y golpear.
+  unit.dest = null;
+  unit.path = [];
+  unit.gathering = false;
+
+  if (unit.cooldown <= 0) {
+    applyDamage(target, unit.damage);
+    unit.cooldown = unit.cooldownMax;
+
+    effects.push({
+      x: target.x + target.size / 2,
+      y: target.y + target.size / 2,
+      age: 0,
+      color: unit.team === TEAM_ENEMY ? "#f87171" : "#fbbf24",
+    });
+  }
+}
+
+// Quita vida y, si llega a cero, retira la unidad o el edificio.
+function applyDamage(target, amount) {
+  if (!target || target.hp <= 0) return;
+
+  target.hp -= amount;
+  if (target.hp > 0) return;
+
+  target.hp = 0;
+
+  if (target === camp) {
+    destroyCamp();
+    return;
+  }
+
+  if (units.includes(target)) {
+    removeUnit(target);
+    return;
+  }
+
+  const buildingIndex = buildings.indexOf(target);
+  if (buildingIndex !== -1) {
+    buildings.splice(buildingIndex, 1);
+    const obstacleIndex = obstacles.indexOf(target);
+    if (obstacleIndex !== -1) obstacles.splice(obstacleIndex, 1);
+    if (selectedBuilding === target) selectedBuilding = null;
+  }
+}
+
+function removeUnit(unit) {
+  const index = units.indexOf(unit);
+  if (index !== -1) units.splice(index, 1);
+
+  for (const other of units) {
+    if (other.attackTarget === unit) other.attackTarget = null;
+  }
+}
+
+function destroyCamp() {
+  if (!camp.alive) return;
+
+  camp.alive = false;
+  camp.hp = 0;
+
+  const buildingIndex = buildings.indexOf(camp);
+  if (buildingIndex !== -1) buildings.splice(buildingIndex, 1);
+  const obstacleIndex = obstacles.indexOf(camp);
+  if (obstacleIndex !== -1) obstacles.splice(obstacleIndex, 1);
+
+  gameState.victory = true;
+}
+
+// El campamento saca guardias si el jugador se acerca.
+function updateCamp(dt) {
+  if (!camp.alive) return;
+
+  camp.spawnTimer += dt;
+
+  const playerNear = units.some(
+    (unit) =>
+      unit.team === TEAM_PLAYER &&
+      Math.hypot(unit.x - camp.x, unit.y - camp.y) < CAMP_GUARD_RADIUS
+  );
+
+  if (!playerNear || camp.spawnTimer < CAMP_SPAWN_INTERVAL) return;
+
+  const guards = units.filter(
+    (unit) =>
+      unit.team === TEAM_ENEMY &&
+      Math.hypot(unit.x - camp.x, unit.y - camp.y) < CAMP_GUARD_RADIUS
+  ).length;
+
+  if (guards >= CAMP_MAX_GUARDS) return;
+
+  spawnEnemy();
+  camp.spawnTimer = 0;
+}
+
+function spawnEnemy() {
+  const spot = findSpawnSpot(camp);
+  if (!spot) return;
+
+  units.push(createUnit(spot.x, spot.y, TEAM_ENEMY));
 }
 
 // ---------------------------------------------------------------------
@@ -915,6 +1212,11 @@ function update(dt) {
 
   clampCamera();
 
+  // Combate: cada unidad decide si busca, persigue o golpea.
+  for (const unit of units.slice()) {
+    updateCombat(unit, dt);
+  }
+
   // Unidades
   for (const unit of units) {
     updateUnit(unit, dt);
@@ -922,6 +1224,9 @@ function update(dt) {
 
   // Que no se pisen entre ellas
   separateUnits();
+
+  // Campamento enemigo
+  updateCamp(dt);
 
   // Cuarteles: unidades en cola
   updateBuildings(dt);
@@ -1067,6 +1372,11 @@ function drawTree() {
 
 function drawBuildings() {
   for (const building of buildings) {
+    if (building.type === "camp") {
+      drawCamp(building);
+      continue;
+    }
+
     // Base y tejado
     ctx.fillStyle = "#6b4a2c";
     ctx.fillRect(building.x, building.y, building.size, building.size);
@@ -1092,7 +1402,39 @@ function drawBuildings() {
       ctx.fillStyle = "#60a5fa";
       ctx.fillRect(building.x, building.y - 14, building.size * ratio, 8);
     }
+
+    drawBuildingHealth(building);
   }
+}
+
+function drawCamp(building) {
+  ctx.fillStyle = "#3f1d1d";
+  ctx.fillRect(building.x, building.y, building.size, building.size);
+
+  ctx.fillStyle = "#7f1d1d";
+  ctx.fillRect(building.x + 10, building.y + 10, building.size - 20, building.size - 20);
+
+  // Banderas en las esquinas
+  ctx.fillStyle = "#ef4444";
+  const flag = 12;
+  ctx.fillRect(building.x - 4, building.y - 16, flag, 16);
+  ctx.fillRect(building.x + building.size - 8, building.y - 16, flag, 16);
+  ctx.fillRect(building.x - 4, building.y + building.size, flag, 16);
+  ctx.fillRect(building.x + building.size - 8, building.y + building.size, flag, 16);
+
+  drawBuildingHealth(building);
+}
+
+function drawBuildingHealth(building) {
+  if (building.hp >= building.maxHp) return;
+
+  const x = building.x;
+  const y = building.y - (building.queue > 0 ? 26 : 10);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(x, y, building.size, 6);
+  ctx.fillStyle = building.team === TEAM_ENEMY ? "#ef4444" : "#22c55e";
+  ctx.fillRect(x, y, building.size * (building.hp / building.maxHp), 6);
 }
 
 function drawBuildGhost() {
@@ -1123,13 +1465,25 @@ function drawEffects() {
 
 function drawUnits() {
   for (const unit of units) {
-    ctx.fillStyle = unit.selected ? "#fbbf24" : "#3b82f6";
+    if (unit.team === TEAM_ENEMY) {
+      ctx.fillStyle = "#ef4444";
+    } else {
+      ctx.fillStyle = unit.selected ? "#fbbf24" : "#3b82f6";
+    }
     ctx.fillRect(unit.x, unit.y, unit.size, unit.size);
 
     if (unit.selected) {
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2 / camera.zoom;
       ctx.strokeRect(unit.x, unit.y, unit.size, unit.size);
+    }
+
+    // Vida: siempre en enemigos; en el jugador solo si está herido.
+    if (unit.team === TEAM_ENEMY || unit.hp < unit.maxHp) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.fillRect(unit.x, unit.y - 10, unit.size, 5);
+      ctx.fillStyle = unit.team === TEAM_ENEMY ? "#ef4444" : "#22c55e";
+      ctx.fillRect(unit.x, unit.y - 10, unit.size * (unit.hp / unit.maxHp), 5);
     }
 
     if (unit.gathering) {
@@ -1142,6 +1496,23 @@ function drawUnits() {
       ctx.stroke();
     }
   }
+}
+
+function drawVictory() {
+  if (!gameState.victory) return;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#fbbf24";
+  ctx.font = "bold 52px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("¡Victoria!", canvas.width / 2, canvas.height / 2);
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "16px system-ui";
+  ctx.fillText("Has destruido el campamento enemigo", canvas.width / 2, canvas.height / 2 + 36);
+  ctx.textAlign = "left";
 }
 
 function drawSelectionBox() {
@@ -1246,6 +1617,7 @@ function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawSelectionBox();
   drawHud();
+  drawVictory();
 }
 
 // ---------------------------------------------------------------------
