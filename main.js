@@ -890,17 +890,8 @@ function spawnUnit(building) {
   const spot = findSpawnSpot(building);
   if (!spot) return false;
 
-  units.push({
-    x: spot.x,
-    y: spot.y,
-    size: UNIT_SIZE,
-    selected: false,
-    dest: null,
-    path: [],
-    gathering: false,
-    gatherOrder: false,
-    stuckTime: 0,
-  });
+  // createUnit deja la unidad completa: equipo, vida, daño y rango.
+  units.push(createUnit(spot.x, spot.y, building.team || TEAM_PLAYER));
   return true;
 }
 
@@ -1023,9 +1014,11 @@ function loadGame() {
   // Unidades
   units.length = 0;
   for (const saved of data.units) {
-    const unit = createUnit(saved.x, saved.y, saved.team);
-    unit.hp = saved.hp;
-    unit.maxHp = saved.maxHp;
+    // Partidas antiguas podían traer unidades sin equipo: por defecto, jugador.
+    const team = saved.team === TEAM_ENEMY ? TEAM_ENEMY : TEAM_PLAYER;
+    const unit = createUnit(saved.x, saved.y, team);
+    unit.maxHp = Number.isFinite(saved.maxHp) ? saved.maxHp : unit.maxHp;
+    unit.hp = Number.isFinite(saved.hp) ? saved.hp : unit.maxHp;
     unit.carrying = saved.carrying || 0;
     unit.cooldown = saved.cooldown || 0;
     unit.gatherOrder = Boolean(saved.gatherOrder);

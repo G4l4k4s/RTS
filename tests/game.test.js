@@ -436,10 +436,32 @@ check("la unidad entra en cola", barracks.queue === 1, barracks.queue);
 
 tick(4.2);
 check("sale una unidad nueva", game.units.length === unitsBeforeTraining + 1);
+
+const newUnit = game.units[game.units.length - 1];
 check(
   "la unidad nueva no aparece dentro del cuartel",
-  !overlapsBuilding(game.units[game.units.length - 1], barracks)
+  !overlapsBuilding(newUnit, barracks)
 );
+check("la unidad nueva es del jugador", newUnit.team === "player", String(newUnit.team));
+check(
+  "la unidad nueva tiene vida y combate",
+  newUnit.hp === newUnit.maxHp && newUnit.damage > 0 && newUnit.range > 0,
+  JSON.stringify({ hp: newUnit.hp, damage: newUnit.damage, range: newUnit.range })
+);
+
+// Y se puede seleccionar como cualquier otra.
+game.clearSelection();
+const newUnitScreenX = (newUnit.x + newUnit.size / 2 - game.camera.x) * game.camera.zoom;
+const newUnitScreenY = (newUnit.y + newUnit.size / 2 - game.camera.y) * game.camera.zoom;
+clickAt(newUnitScreenX, newUnitScreenY);
+check(
+  "la unidad nueva se puede seleccionar",
+  game.selectedUnits().length === 1 && newUnit.selected === true,
+  "seleccionadas=" + game.selectedUnits().length
+);
+
+// Volver a seleccionar el cuartel para seguir entrenando.
+clickAt(200, 150);
 
 clickAt(500, 560);
 clickAt(500, 560);
