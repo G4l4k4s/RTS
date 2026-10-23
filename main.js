@@ -22,6 +22,7 @@ const UNIT_SIZE = 40;                             // Lado del cuadrado de cada u
 const EFFECT_DURATION = 0.6;                      // Segundos que dura el círculo que marca el destino
 
 const GATHER_RATE = 12;                           // Madera por segundo que extrae cada unidad
+const CARRY_CAPACITY = 10;                        // Madera que cabe en un viaje
 const WOOD_PER_TREE = 300;                        // Madera que guarda un árbol
 const HUD_HEIGHT = 64;                            // Alto de la barra de interfaz
 
@@ -78,6 +79,8 @@ function createUnit(x, y, team) {
     path: [],
     gathering: false,
     gatherOrder: false,
+    task: null,
+    carrying: 0,
     stuckTime: 0,
   };
 }
@@ -118,6 +121,19 @@ const camp = {
 };
 buildings.push(camp);
 obstacles.push(camp);
+
+// Centro de mando: punto donde los trabajadores entregan la madera.
+const depot = {
+  type: "depot",
+  team: TEAM_PLAYER,
+  x: 440,
+  y: 560,
+  size: 100,
+  hp: 500,
+  maxHp: 500,
+};
+buildings.push(depot);
+obstacles.push(depot);
 
 // Estado global de la partida.
 const gameState = { victory: false };
@@ -500,10 +516,12 @@ function issueMoveOrder(worldX, worldY) {
     return;
   }
 
-  // Al moverse, se cancela cualquier tala en curso.
+  // Al moverse, se cancela cualquier tala o ataque en curso.
   for (const unit of selected) {
     unit.gathering = false;
     unit.gatherOrder = false;
+    unit.task = null;
+    unit.attackTarget = null;
   }
 
   const spacing = 48;                                    // separación entre unidades
@@ -575,10 +593,115 @@ function orderGather(selected) {
     const slot = freeSlots.splice(bestIndex, 1)[0];
     unit.gatherOrder = true;
     unit.gathering = false;
+    unit.attackTarget = null;
+    unit.task = { type: "gather", phase: "toTree", slot };
     unit.path = buildRoute(unit, slot);
     unit.dest = unit.path[0];
     unit.stuckTime = 0;
   }
+}
+
+// Al llegar a la última parada de la ruta.
+function handleArrival(unit) {
+  const task = unit.task;
+  if (!task || task.type !== "gather") return;
+
+  if (task.phase === "toTree") {
+    if (tree.depleted) {
+      goDeposit(unit);
+      return;
+    }
+    task.phase = "harvest";
+    unit.gathering = true;
+    return;
+  }
+
+  if (task.phase === "toDepot") {
+    depositWood(unit);
+  }
+}
+
+// Centro de mando más cercano donde entregar la madera.
+function nearestDepot(unit) {
+  let best = null;
+  let bestDistance = Infinity;
+
+  for (const building of buildings) {
+    if (building.type !== "depot" || building.team !== TEAM_PLAYER || building.hp <= 0) continue;
+
+    const distance = Math.hypot(
+      building.x + building.size / 2 - (unit.x + unit.size / 2),
+      building.y + building.size / 2 - (unit.y + unit.size / 2)
+    );
+    if (distance < bestDistance) {
+      best = building;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
+// Manda al trabajador a entregar lo que lleva.
+function goDeposit(unit) {
+  unit.gathering = false;
+
+  if (unit.carrying <= 0) {
+    unit.task = null;
+    unit.gatherOrder = false;
+    return;
+  }
+
+  const target = nearestDepot(unit);
+  if (!target) {
+    // Sin centro de mando no hay dónde entregar: se queda con la madera.
+    unit.task = null;
+    unit.gatherOrder = false;
+    return;
+  }
+
+  unit.task.phase = "toDepot";
+  const slot = depotSlot(target, unit);
+  unit.path = buildRoute(unit, slot);
+  unit.dest = unit.path[0];
+  unit.stuckTime = 0;
+}
+
+// Hueco alrededor del centro de mando más cercano a la unidad.
+function depotSlot(depotBuilding, unit) {
+  const slots = gatherSlots(depotBuilding);
+
+  let best = slots[0];
+  let bestDistance = Infinity;
+  for (const slot of slots) {
+    const distance = Math.hypot(slot.x - unit.x, slot.y - unit.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = slot;
+    }
+  }
+  return best;
+}
+
+// Entrega la carga y, si el árbol sigue en pie, vuelve a por más.
+function depositWood(unit) {
+  stockpile.wood += unit.carrying;
+  unit.carrying = 0;
+  unit.gathering = false;
+
+  const slot = unit.task ? unit.task.slot : null;
+  const keepWorking = unit.gatherOrder && !tree.depleted && slot;
+
+  if (!keepWorking) {
+    unit.task = null;
+    unit.gatherOrder = false;
+    return;
+  }
+
+  unit.task = { type: "gather", phase: "toTree", slot };
+  unit.path = buildRoute(unit, slot);
+  unit.dest = unit.path[0];
+  unit.stuckTime = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -841,6 +964,7 @@ function orderAttack(selected, target) {
     unit.attackTarget = target;
     unit.gatherOrder = false;
     unit.gathering = false;
+    unit.task = null;
     unit.dest = null;
     unit.path = [];
     unit.stuckTime = 0;
@@ -1138,9 +1262,9 @@ function updateUnit(unit, dt) {
     unit.path.shift();
     unit.dest = unit.path.length > 0 ? unit.path[0] : null;
 
-    // Si venía a talar y ya está en su hueco, empieza a trabajar.
-    if (!unit.dest && unit.gatherOrder && !tree.depleted) {
-      unit.gathering = true;
+    // Al llegar al final, la tarea decide qué hacer (talar o entregar).
+    if (!unit.dest) {
+      handleArrival(unit);
     }
     return;
   }
@@ -1231,21 +1355,35 @@ function update(dt) {
   // Cuarteles: unidades en cola
   updateBuildings(dt);
 
-  // Tala: cada unidad que trabaja va sacando madera del árbol.
+  // Tala: cada unidad llena su carga y la lleva al centro de mando.
   for (const unit of units) {
-    if (!unit.gathering) continue;
+    if (!unit.task || unit.task.type !== "gather" || unit.task.phase !== "harvest") continue;
+
     if (tree.depleted || tree.wood <= 0) {
-      unit.gathering = false;
-      unit.gatherOrder = false;
+      goDeposit(unit);
       continue;
     }
 
-    const amount = Math.min(GATHER_RATE * dt, tree.wood);
+    if (!unit.gathering) continue;         // está ocupada con otra cosa (pelear)
+
+    const room = CARRY_CAPACITY - unit.carrying;
+    if (room <= 0) {
+      goDeposit(unit);
+      continue;
+    }
+
+    const amount = Math.min(GATHER_RATE * dt, tree.wood, room);
     tree.wood -= amount;
-    stockpile.wood += amount;
+    unit.carrying += amount;
 
     if (tree.wood <= 0) {
       depleteTree();
+      goDeposit(unit);
+      continue;
+    }
+
+    if (unit.carrying >= CARRY_CAPACITY - 0.0001) {
+      goDeposit(unit);                     // carga llena: al centro de mando
     }
   }
 
@@ -1270,9 +1408,17 @@ function depleteTree() {
   const index = obstacles.indexOf(tree);
   if (index !== -1) obstacles.splice(index, 1);
 
+  // Los que no llevan nada dejan de trabajar; los que llevan madera
+  // terminan de entregarla.
   for (const unit of units) {
     unit.gathering = false;
     unit.gatherOrder = false;
+
+    if (unit.task && unit.carrying <= 0) {
+      unit.task = null;
+      unit.dest = null;
+      unit.path = [];
+    }
   }
 }
 
@@ -1377,6 +1523,11 @@ function drawBuildings() {
       continue;
     }
 
+    if (building.type === "depot") {
+      drawDepot(building);
+      continue;
+    }
+
     // Base y tejado
     ctx.fillStyle = "#6b4a2c";
     ctx.fillRect(building.x, building.y, building.size, building.size);
@@ -1407,6 +1558,35 @@ function drawBuildings() {
   }
 }
 
+function drawDepot(building) {
+  ctx.fillStyle = "#3b4a5a";
+  ctx.fillRect(building.x, building.y, building.size, building.size);
+
+  ctx.fillStyle = "#5b7189";
+  ctx.fillRect(building.x + 8, building.y + 8, building.size - 16, building.size - 16);
+
+  // Tejado azul
+  ctx.fillStyle = "#93c5fd";
+  ctx.beginPath();
+  ctx.moveTo(building.x - 6, building.y + 12);
+  ctx.lineTo(building.x + building.size / 2, building.y - 18);
+  ctx.lineTo(building.x + building.size + 6, building.y + 12);
+  ctx.closePath();
+  ctx.fill();
+
+  // Puerta
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(building.x + building.size / 2 - 12, building.y + building.size - 30, 24, 30);
+
+  if (building === selectedBuilding) {
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 3 / camera.zoom;
+    ctx.strokeRect(building.x - 2, building.y - 2, building.size + 4, building.size + 4);
+  }
+
+  drawBuildingHealth(building);
+}
+
 function drawCamp(building) {
   ctx.fillStyle = "#3f1d1d";
   ctx.fillRect(building.x, building.y, building.size, building.size);
@@ -1429,7 +1609,7 @@ function drawBuildingHealth(building) {
   if (building.hp >= building.maxHp) return;
 
   const x = building.x;
-  const y = building.y - (building.queue > 0 ? 26 : 10);
+  const y = building.y - (building.queue > 0 || building.type === "depot" || building.type === "camp" ? 26 : 10);
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(x, y, building.size, 6);
@@ -1484,6 +1664,12 @@ function drawUnits() {
       ctx.fillRect(unit.x, unit.y - 10, unit.size, 5);
       ctx.fillStyle = unit.team === TEAM_ENEMY ? "#ef4444" : "#22c55e";
       ctx.fillRect(unit.x, unit.y - 10, unit.size * (unit.hp / unit.maxHp), 5);
+    }
+
+    // Madera que lleva encima
+    if (unit.carrying > 0) {
+      ctx.fillStyle = "#a97c50";
+      ctx.fillRect(unit.x + unit.size - 12, unit.y + unit.size - 10, 10, 8);
     }
 
     if (unit.gathering) {
@@ -1559,10 +1745,20 @@ function drawHud() {
   // Información de la selección
   ctx.font = "14px system-ui";
   if (selectedBuilding) {
+    const isDepot = selectedBuilding.type === "depot";
     ctx.fillStyle = "#e8e8e8";
-    ctx.fillText(`Cuartel · cola: ${selectedBuilding.queue}`, 220, top + 28);
+    ctx.fillText(
+      `${isDepot ? "Centro de mando" : "Cuartel"} · vida ${Math.ceil(selectedBuilding.hp)}`,
+      220,
+      top + 28
+    );
     ctx.fillStyle = "#7d8794";
-    ctx.fillText(`Entrenar cuesta ${UNIT_COST} de madera`, 220, top + 48);
+    ctx.font = "13px system-ui";
+    ctx.fillText(
+      isDepot ? "Entrega aquí la madera" : `Cola: ${selectedBuilding.queue} · Entrenar ${UNIT_COST}`,
+      220,
+      top + 48
+    );
   } else {
     ctx.fillStyle = "#aab4c0";
     ctx.fillText(`Seleccionadas: ${selectedUnits().length}`, 220, top + 28);
