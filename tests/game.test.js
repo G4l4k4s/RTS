@@ -4,6 +4,9 @@ const { loadGame } = require("./harness");
 
 const { game, canvas, drawCalls, canvasListeners, windowListeners } = loadGame();
 
+// Las oleadas se prueban aparte; en el resto de la suite el reloj está parado.
+game.waveState.timer = 1e9;
+
 let failures = 0;
 function check(name, condition, extra = "") {
   if (condition) {
@@ -622,6 +625,59 @@ game.units.forEach((unit) => {
 });
 
 // ---------------------------------------------------------------------
+// 29b. Oleadas enemigas
+// ---------------------------------------------------------------------
+// Volver a la base para que la oleada tenga que caminar.
+game.clearSelection();
+game.units.forEach((unit, index) => {
+  unit.x = 600 + (index % 3) * 60;
+  unit.y = 400 + Math.floor(index / 3) * 60;
+  unit.hp = unit.maxHp;
+  unit.dest = null;
+  unit.path = [];
+  unit.attackTarget = null;
+});
+
+game.waveState.number = 0;
+game.waveState.timer = 0;
+game.update(1 / 60);
+
+const waveEnemies = game.units.filter((unit) => unit.team === "enemy" && unit.wave);
+check(
+  "la primera oleada aparece",
+  game.waveState.number === 1 && waveEnemies.length > 0,
+  "enemigos=" + waveEnemies.length
+);
+check(
+  "los enemigos de la oleada van a por la base",
+  waveEnemies.length > 0 && waveEnemies.every((unit) => unit.attackTarget && unit.attackTarget.team === "player")
+);
+
+const waveStartX = Math.min(...waveEnemies.map((unit) => unit.x));
+tick(4);
+check(
+  "la oleada avanza hacia la base",
+  waveEnemies.some((unit) => unit.x < waveStartX - 100),
+  JSON.stringify(waveEnemies.map((unit) => [Math.round(unit.x), Math.round(unit.y)]))
+);
+
+drawCalls.length = 0;
+game.render();
+check(
+  "el HUD muestra la cuenta atrás de la oleada",
+  drawCalls.some((c) => c[0] === "fillText" && String(c[1]).includes("Oleada"))
+);
+
+// Limpiar la oleada y parar el reloj para el resto de pruebas.
+for (let i = game.units.length - 1; i >= 0; i--) {
+  if (game.units[i].team === "enemy") game.units.splice(i, 1);
+}
+game.units.forEach((unit) => {
+  unit.attackTarget = null;
+});
+game.waveState.timer = 1e9;
+
+// ---------------------------------------------------------------------
 // 30. Destruir el campamento da la victoria
 // ---------------------------------------------------------------------
 game.clearSelection();
@@ -660,6 +716,15 @@ check(
   drawCalls.some((c) => c[0] === "fillText" && String(c[1]).includes("Victoria"))
 );
 
+const waveNumberAfterVictory = game.waveState.number;
+game.waveState.timer = 0;
+game.update(1 / 60);
+check(
+  "la victoria detiene las oleadas",
+  game.waveState.number === waveNumberAfterVictory,
+  game.waveState.number
+);
+
 // ---------------------------------------------------------------------
 // 31. Guardar y cargar la partida
 // ---------------------------------------------------------------------
@@ -671,6 +736,7 @@ game.camera.zoom = 1;
 
 const unitsToSave = game.units.length;
 const buildingsToSave = game.buildings.length;
+const waveNumberToSave = game.waveState.number;
 
 clickAt(660, 20);   // botón Guardar
 check("el botón Guardar guarda la partida", game.toast.text === "Partida guardada", game.toast.text);
@@ -690,12 +756,31 @@ check("se restaura la cámara", Math.abs(game.camera.x - 500) < 0.01, game.camer
 check("se restauran las unidades", game.units.length === unitsToSave, game.units.length);
 check("se restauran los edificios", game.buildings.length === buildingsToSave, game.buildings.length);
 check("se restaura la victoria", game.gameState.victory === true);
+check("se restaura la oleada", game.waveState.number === waveNumberToSave, game.waveState.number);
 check(
   "quien llevaba madera vuelve al centro de mando",
   game.units[0].carrying === 5 &&
     game.units[0].task &&
     game.units[0].task.phase === "toDepot",
   game.units[0].carrying + " / " + (game.units[0].task ? game.units[0].task.phase : "sin tarea")
+);
+
+// ---------------------------------------------------------------------
+// 32. Derrota sin unidades ni edificios
+// ---------------------------------------------------------------------
+const defeatRun = loadGame();
+defeatRun.game.waveState.timer = 1e9;
+defeatRun.game.units.length = 0;
+defeatRun.game.buildings.length = 0;
+defeatRun.game.update(1 / 60);
+
+check("sin unidades ni edificios se pierde", defeatRun.game.gameState.defeat === true);
+
+defeatRun.drawCalls.length = 0;
+defeatRun.game.render();
+check(
+  "se dibuja la pantalla de derrota",
+  defeatRun.drawCalls.some((c) => c[0] === "fillText" && String(c[1]).includes("Derrota"))
 );
 
 console.log(failures === 0 ? "\nTODO OK" : "\nFALLOS: " + failures);

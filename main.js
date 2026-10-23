@@ -56,6 +56,10 @@ const CAMP_SPAWN_INTERVAL = 12;                   // Segundos entre guardias
 const CAMP_MAX_GUARDS = 6;
 const CAMP_GUARD_RADIUS = 300;                    // Sólo saca guardias si te acercas
 
+const WAVE_FIRST_DELAY = 60;                      // Segundos hasta la primera oleada
+const WAVE_INTERVAL = 45;                         // Segundos entre oleadas
+const WAVE_MAX_LIVE = 24;                         // Tope de enemigos vivos a la vez
+
 // Crea una unidad del equipo indicado con sus estadísticas de combate.
 function createUnit(x, y, team) {
   const player = team === TEAM_PLAYER;
@@ -136,7 +140,10 @@ buildings.push(depot);
 obstacles.push(depot);
 
 // Estado global de la partida.
-const gameState = { victory: false };
+const gameState = { victory: false, defeat: false };
+
+// Oleadas: cuánto falta para la siguiente y cuántas van.
+const waveState = { number: 0, timer: WAVE_FIRST_DELAY };
 
 // Guardado en el navegador y aviso flotante.
 const SAVE_KEY = "mi-primer-rts-save";
@@ -936,6 +943,15 @@ function showToast(text) {
   toast.time = 2.5;
 }
 
+// Reiniciar: recargar la página es lo más limpio, no queda estado viejo.
+function restartGame() {
+  if (typeof location !== "undefined" && typeof location.reload === "function") {
+    location.reload();
+    return;
+  }
+  showToast("Recarga la página para reiniciar");
+}
+
 function toolbarButtons() {
   return {
     save: { x: canvas.width - 176, y: 10, w: 78, h: 26 },
@@ -951,6 +967,8 @@ function saveGame() {
       stockpile: { wood: stockpile.wood },
       tree: { wood: tree.wood, depleted: tree.depleted },
       victory: gameState.victory,
+      defeat: gameState.defeat,
+      wave: { number: waveState.number, timer: waveState.timer },
       units: units.map((unit) => ({
         x: unit.x,
         y: unit.y,
@@ -1010,6 +1028,9 @@ function loadGame() {
   tree.wood = data.tree.wood;
   tree.depleted = data.tree.depleted;
   gameState.victory = Boolean(data.victory);
+  gameState.defeat = Boolean(data.defeat);
+  waveState.number = data.wave ? data.wave.number || 0 : 0;
+  waveState.timer = data.wave && Number.isFinite(data.wave.timer) ? data.wave.timer : WAVE_FIRST_DELAY;
 
   // Unidades
   units.length = 0;
@@ -1171,7 +1192,10 @@ function updateCombat(unit, dt) {
   // Los enemigos buscan al jugador a cierta distancia; las unidades del
   // jugador sólo responden a enemigos que ya estén a tiro.
   if (!target && !unit.dest) {
-    const searchRange = unit.team === TEAM_ENEMY ? ENEMY_AGGRO_RANGE : unit.range + 10;
+    const searchRange =
+      unit.team === TEAM_ENEMY
+        ? (unit.wave ? Infinity : ENEMY_AGGRO_RANGE)
+        : unit.range + 10;
     target = findNearestOpponent(unit, searchRange);
     if (target) {
       unit.attackTarget = target;
@@ -1294,6 +1318,53 @@ function spawnEnemy() {
   units.push(createUnit(spot.x, spot.y, TEAM_ENEMY));
 }
 
+// Oleadas: cada cierto tiempo el campamento manda un grupo hacia tu base.
+function updateWaves(dt) {
+  if (gameState.victory || gameState.defeat || !camp.alive) return;
+
+  waveState.timer -= dt;
+  if (waveState.timer > 0) return;
+
+  waveState.number += 1;
+  waveState.timer = WAVE_INTERVAL;
+
+  const livingEnemies = units.filter((unit) => unit.team === TEAM_ENEMY).length;
+  const desired = Math.min(8, 1 + Math.ceil(waveState.number / 2));
+  const count = Math.min(desired, Math.max(0, WAVE_MAX_LIVE - livingEnemies));
+
+  for (let i = 0; i < count; i++) {
+    spawnWaveEnemy();
+  }
+
+  if (count > 0) {
+    showToast(`¡Oleada ${waveState.number}!`);
+  }
+}
+
+function spawnWaveEnemy() {
+  const spot = findSpawnSpot(camp);
+  if (!spot) return false;
+
+  const enemy = createUnit(spot.x, spot.y, TEAM_ENEMY);
+  enemy.wave = true;
+  enemy.attackTarget = findNearestOpponent(enemy, Infinity);
+  units.push(enemy);
+  return true;
+}
+
+// Si no queda nada del jugador, la partida termina.
+function updateDefeat() {
+  if (gameState.victory || gameState.defeat) return;
+
+  const hasUnits = units.some((unit) => unit.team === TEAM_PLAYER);
+  const hasBuildings = buildings.some((building) => building.team === TEAM_PLAYER);
+
+  if (!hasUnits && !hasBuildings) {
+    gameState.defeat = true;
+    showToast("Derrota");
+  }
+}
+
 // ---------------------------------------------------------------------
 // 6. Eventos
 // ---------------------------------------------------------------------
@@ -1311,8 +1382,16 @@ window.addEventListener("keydown", (event) => {
     }
   }
 
-  if (event.key.toLowerCase() === "b" && !event.repeat) {
+  if (event.key.toLowerCase() === "b" && !event.repeat && !gameState.victory && !gameState.defeat) {
     startBuildMode();
+  }
+
+  if (
+    (gameState.victory || gameState.defeat) &&
+    event.key.toLowerCase() === "r" &&
+    !event.repeat
+  ) {
+    restartGame();
   }
 
   keys[event.key.toLowerCase()] = true;
@@ -1347,6 +1426,9 @@ canvas.addEventListener("mousedown", (event) => {
     loadGame();
     return;
   }
+
+  // Partida terminada: no se dan órdenes al mapa.
+  if (gameState.victory || gameState.defeat) return;
 
   // Clic en la barra inferior: botones del HUD.
   if (p.screenY >= canvas.height - HUD_HEIGHT) {
@@ -1393,6 +1475,8 @@ window.addEventListener("mouseup", (event) => {
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();                   // quitar el menú contextual del navegador
   const p = pointerPosition(event);
+
+  if (gameState.victory || gameState.defeat) return;   // partida terminada
 
   // Clic derecho mientras se coloca: cancelar la construcción.
   if (buildMode.active) {
@@ -1548,6 +1632,10 @@ function update(dt) {
 
   // Campamento enemigo
   updateCamp(dt);
+
+  // Oleadas y condición de derrota
+  updateWaves(dt);
+  updateDefeat();
 
   // Cuarteles: unidades en cola
   updateBuildings(dt);
@@ -1939,6 +2027,45 @@ function drawVictory() {
   ctx.textAlign = "left";
 }
 
+function drawDefeat() {
+  if (!gameState.defeat || gameState.victory) return;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#f87171";
+  ctx.font = "bold 52px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("Derrota", canvas.width / 2, canvas.height / 2);
+
+  ctx.fillStyle = "#e8e8e8";
+  ctx.font = "16px system-ui";
+  ctx.fillText("Te has quedado sin unidades y sin edificios", canvas.width / 2, canvas.height / 2 + 36);
+  ctx.fillText("Pulsa R para reiniciar", canvas.width / 2, canvas.height / 2 + 62);
+  ctx.textAlign = "left";
+}
+
+function drawWaveInfo() {
+  if (gameState.victory || gameState.defeat) return;
+
+  const seconds = Math.max(0, Math.ceil(waveState.timer));
+  const label =
+    waveState.number === 0
+      ? `Primera oleada en ${seconds}s`
+      : `Oleada ${waveState.number + 1} en ${seconds}s`;
+
+  ctx.fillStyle = "rgba(8, 12, 16, 0.72)";
+  ctx.fillRect(12, 10, 190, 28);
+
+  ctx.strokeStyle = "#7f1d1d";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12.5, 10.5, 189, 27);
+
+  ctx.fillStyle = "#fca5a5";
+  ctx.font = "14px system-ui";
+  ctx.fillText(label, 22, 29);
+}
+
 function drawSelectionBox() {
   if (!drag.active || !drag.moved) return;
 
@@ -2087,9 +2214,11 @@ function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawSelectionBox();
   drawHud();
+  drawWaveInfo();
   drawToolbar();
   drawToast();
   drawVictory();
+  drawDefeat();
 }
 
 // ---------------------------------------------------------------------
