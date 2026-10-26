@@ -19,7 +19,12 @@ import { pointInRect } from "../core/math";
 
 // Convierte la posición del ratón a coordenadas del canvas y del mundo.
 // El factor de escala es por si algún día el CSS cambia el tamaño del canvas.
-export function pointerPosition(event) {
+export function pointerPosition(event: MouseEvent): {
+  screenX: number;
+  screenY: number;
+  x: number;
+  y: number;
+} {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;

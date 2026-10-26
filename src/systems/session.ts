@@ -10,8 +10,9 @@ import { clampCamera } from "../core/view";
 import { findNearestOpponent } from "./combat";
 import { goDeposit } from "./economy";
 import { showToast } from "../core/feedback";
+import type { Difficulty } from "../core/types";
 
-export function hasAutosave() {
+export function hasAutosave(): boolean {
   try {
     return Boolean(localStorage.getItem(AUTOSAVE_KEY));
   } catch (error) {
@@ -19,7 +20,7 @@ export function hasAutosave() {
   }
 }
 
-export function saveGame(key = SAVE_KEY, silent = false) {
+export function saveGame(key: string = SAVE_KEY, silent = false): void {
   try {
     const data = {
       version: 1,
@@ -64,7 +65,7 @@ export function saveGame(key = SAVE_KEY, silent = false) {
   }
 }
 
-export function loadGame(key = SAVE_KEY) {
+export function loadGame(key: string = SAVE_KEY): void {
   let data;
 
   try {
@@ -86,7 +87,8 @@ export function loadGame(key = SAVE_KEY) {
 
   gameState.scene = "playing";
   gameState.paused = false;
-  gameState.difficulty = DIFFICULTIES[data.difficulty] ? data.difficulty : "normal";
+  const savedDifficulty = data.difficulty as Difficulty;
+  gameState.difficulty = DIFFICULTIES[savedDifficulty] ? savedDifficulty : "normal";
 
   // Mundo y cámara
   camera.x = data.camera.x;
@@ -189,7 +191,7 @@ export function loadGame(key = SAVE_KEY) {
 }
 
 // Empieza una partida nueva con la dificultad indicada, sin recargar la página.
-export function startNewGame(difficulty = "normal") {
+export function startNewGame(difficulty: Difficulty = "normal"): void {
   const preset = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
 
   gameState.scene = "playing";

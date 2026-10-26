@@ -11,6 +11,7 @@ import {
   WAVE_FIRST_DELAY,
   WOOD_PER_TREE,
 } from "./constants";
+import type { BuildableType, Difficulty, Scene } from "./types";
 
 // Canvas y contexto 2D. Los tests inyectan un DOM falso antes de cargar esto.
 export const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -33,7 +34,13 @@ export const state = {
   stockpile: { wood: 0 },
   buildings: [] as any[],
   selectedBuilding: null as any,
-  buildMode: { active: false, type: "barracks", x: 0, y: 0, valid: false },
+  buildMode: {
+    active: false,
+    type: "barracks" as BuildableType,
+    x: 0,
+    y: 0,
+    valid: false,
+  },
   obstacles: [] as any[],
 
   camp: {
@@ -59,9 +66,9 @@ export const state = {
 
   // Partida
   gameState: {
-    scene: "menu", // menu | playing
+    scene: "menu" as Scene, // menu | playing
     paused: false,
-    difficulty: "normal",
+    difficulty: "normal" as Difficulty,
     victory: false,
     defeat: false,
   },

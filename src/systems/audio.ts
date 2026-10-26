@@ -1,8 +1,9 @@
 // Sonido sintetizado con WebAudio.
 import { state, canvas, ctx, audio } from "../core/state";
 import { showToast } from "../core/feedback";
+import type { SoundSpec } from "../core/types";
 
-export function getAudioContext() {
+export function getAudioContext(): AudioContext | null {
   if (!audio.enabled) return null;
   if (audio.context) return audio.context;
 
@@ -20,7 +21,7 @@ export function getAudioContext() {
   return audio.context;
 }
 
-export function playSound(kind) {
+export function playSound(kind: string): void {
   if (!audio.enabled) return;
 
   const context = getAudioContext();
@@ -30,7 +31,7 @@ export function playSound(kind) {
     context.resume();
   }
 
-  const presets = {
+  const presets: Record<string, SoundSpec> = {
     hit: { frequency: 220, duration: 0.08, type: "square", volume: 0.03 },
     shoot: { frequency: 620, duration: 0.08, type: "triangle", volume: 0.025 },
     death: { frequency: 110, duration: 0.2, type: "sawtooth", volume: 0.04 },
@@ -61,7 +62,7 @@ export function playSound(kind) {
   }
 }
 
-export function toggleSound() {
+export function toggleSound(): void {
   audio.enabled = !audio.enabled;
   if (audio.enabled) playSound("build");
   showToast(audio.enabled ? "Sonido activado" : "Sonido silenciado");

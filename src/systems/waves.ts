@@ -11,7 +11,7 @@ import { playSound } from "./audio";
 import { saveGame } from "./session";
 
 // El campamento saca guardias si el jugador se acerca.
-export function updateCamp(dt) {
+export function updateCamp(dt: number): void {
   if (!camp.alive) return;
 
   camp.spawnTimer += dt;
@@ -36,7 +36,7 @@ export function updateCamp(dt) {
   camp.spawnTimer = 0;
 }
 
-export function spawnEnemy() {
+export function spawnEnemy(): void {
   const spot = findSpawnSpot(camp);
   if (!spot) return;
 
@@ -44,7 +44,7 @@ export function spawnEnemy() {
 }
 
 // Oleadas: cada cierto tiempo el campamento manda un grupo hacia tu base.
-export function updateWaves(dt) {
+export function updateWaves(dt: number): void {
   if (gameState.victory || gameState.defeat || !camp.alive) return;
 
   const preset = DIFFICULTIES[gameState.difficulty] || DIFFICULTIES.normal;
@@ -75,7 +75,7 @@ export function updateWaves(dt) {
   }
 }
 
-export function spawnWaveEnemy() {
+export function spawnWaveEnemy(): boolean {
   const spot = findSpawnSpot(camp);
   if (!spot) return false;
 
@@ -92,7 +92,7 @@ export function spawnWaveEnemy() {
 }
 
 // Si no queda nada del jugador, la partida termina.
-export function updateDefeat() {
+export function updateDefeat(): void {
   if (gameState.victory || gameState.defeat) return;
 
   const hasUnits = units.some((unit) => unit.team === TEAM_PLAYER);

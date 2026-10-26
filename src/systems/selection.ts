@@ -5,9 +5,10 @@ import {
 } from "../core/constants";
 import { rectsOverlap, unitRect } from "../core/math";
 import { screenToWorld, clampCamera } from "../core/view";
+import type { Building, Rect, Unit, UnitType } from "../core/types";
 
 // Devuelve la unidad que contiene un punto del mundo, o null.
-export function unitAt(worldX, worldY) {
+export function unitAt(worldX: number, worldY: number): Unit | null {
   for (const unit of units) {
     if (
       worldX >= unit.x &&
@@ -22,7 +23,7 @@ export function unitAt(worldX, worldY) {
 }
 
 // Devuelve el cuartel que contiene un punto del mundo, o null.
-export function buildingAt(worldX, worldY) {
+export function buildingAt(worldX: number, worldY: number): Building | null {
   for (const building of buildings) {
     if (
       worldX >= building.x &&
@@ -36,19 +37,19 @@ export function buildingAt(worldX, worldY) {
   return null;
 }
 
-export function clearSelection() {
+export function clearSelection(): void {
   for (const unit of units) {
     unit.selected = false;
   }
   state.selectedBuilding = null;
 }
 
-export function selectedUnits() {
+export function selectedUnits(): Unit[] {
   return units.filter((unit) => unit.selected);
 }
 
 // ¿Está la unidad dentro de la parte visible del mapa?
-export function isOnScreen(unit) {
+export function isOnScreen(unit: Unit): boolean {
   const screenX = (unit.x + unit.size / 2 - camera.x) * camera.zoom;
   const screenY = (unit.y + unit.size / 2 - camera.y) * camera.zoom;
   return (
@@ -60,7 +61,7 @@ export function isOnScreen(unit) {
 }
 
 // Doble clic: selecciona todas las unidades del mismo tipo que se ven.
-export function selectSameTypeOnScreen(type) {
+export function selectSameTypeOnScreen(type: UnitType): void {
   clearSelection();
   for (const unit of units) {
     if (unit.team !== TEAM_PLAYER || unit.type !== type) continue;
@@ -69,7 +70,7 @@ export function selectSameTypeOnScreen(type) {
 }
 
 // Recupera un grupo de control y centra la cámara en él.
-export function selectControlGroup(index) {
+export function selectControlGroup(index: number): void {
   clearSelection();
 
   const group = controlGroups[index].filter(
@@ -90,7 +91,7 @@ export function selectControlGroup(index) {
 }
 
 // Centra la vista en el centro de mando.
-export function centerOnBase() {
+export function centerOnBase(): void {
   const base =
     buildings.find((building) => building.type === "depot" && building.hp > 0) ||
     buildings.find((building) => building.team === TEAM_PLAYER && building.hp > 0);
@@ -103,7 +104,7 @@ export function centerOnBase() {
 }
 
 // Caja de selección actual, ya convertida al mundo.
-export function selectionBox() {
+export function selectionBox(): Rect {
   const start = screenToWorld(drag.startScreenX, drag.startScreenY);
   const end = screenToWorld(drag.endScreenX, drag.endScreenY);
   return {
@@ -115,7 +116,7 @@ export function selectionBox() {
 }
 
 // Al soltar el botón izquierdo decidimos si fue un clic o una caja.
-export function finishDrag() {
+export function finishDrag(): void {
   if (!drag.moved) {
     // Fue un clic: seleccionar lo que haya bajo el cursor.
     if (!drag.additive) clearSelection();

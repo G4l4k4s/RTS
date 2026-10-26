@@ -75,7 +75,7 @@ export function drawMinimap() {
   );
 }
 
-export function minimapClick(screenX, screenY) {
+export function minimapClick(screenX: number, screenY: number): boolean {
   const rect = minimapRect();
   if (!pointInRect(screenX, screenY, rect)) return false;
 

@@ -12,12 +12,13 @@ import { updateCamp, updateWaves, updateDefeat } from "../systems/waves";
 import { updateBuildings, updateTowers } from "../systems/buildings";
 import { updateFog } from "../systems/fog";
 import { updateEffects } from "../core/feedback";
+import type { Unit } from "../core/types";
 
 
 
 // Mueve una unidad hacia su destino. La ruta ya esquiva los obstáculos, pero si
 // algo la bloquea de todos modos, intenta deslizarse por uno de los dos ejes.
-export function updateUnit(unit, dt) {
+export function updateUnit(unit: Unit, dt: number): void {
   if (!unit.dest) return;
 
   const dx = unit.dest.x - unit.x;

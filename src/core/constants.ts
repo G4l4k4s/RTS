@@ -1,5 +1,13 @@
 // Constantes y datos de configuración del juego.
 // No contienen estado mutable: se pueden importar desde cualquier módulo.
+import type {
+  BuildSpec,
+  BuildableType,
+  Difficulty,
+  DifficultyConfig,
+  UnitStats,
+  UnitType,
+} from "./types";
 
 // 2. Configuración del mundo
 export const MIN_ZOOM = 0.75; // Cuánto se puede alejar la cámara
@@ -102,7 +110,7 @@ export const DIFFICULTIES = {
     enemyHp: 1.15,
     enemyDamage: 1.15,
   },
-};
+} satisfies Record<Difficulty, DifficultyConfig>;
 
 export const START_POSITIONS = [
   [600, 400],
@@ -111,7 +119,7 @@ export const START_POSITIONS = [
   [600, 460],
   [660, 460],
   [720, 460],
-];
+] satisfies [number, number][];
 
 // Tipos de unidad del jugador.
 export const UNIT_STATS = {
@@ -133,13 +141,13 @@ export const UNIT_STATS = {
     color: "#38bdf8",
     cost: 60,
   },
-};
+} satisfies Record<UnitType, UnitStats>;
 
 // Tipos de edificio que se pueden construir.
 export const BUILD_SPECS = {
   barracks: { cost: BARRACKS_COST, size: BARRACKS_SIZE, hp: BARRACKS_HP },
   tower: { cost: TOWER_COST, size: TOWER_SIZE, hp: TOWER_HP },
-};
+} satisfies Record<BuildableType, BuildSpec>;
 
 // Separación mínima entre una unidad y un obstáculo cuando se recoloca un
 // destino. Debe ser mayor que el margen de la ruta (paddedRect) para que el

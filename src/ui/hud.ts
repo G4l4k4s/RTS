@@ -6,6 +6,7 @@ import {
 import { hudButtons, toolbarButtons } from "../core/layout";
 import { unitCost, canTrain } from "../systems/buildings";
 import { selectedUnits } from "../systems/selection";
+import type { Rect } from "../core/types";
 
 export function drawHud() {
   const top = canvas.height - HUD_HEIGHT;
@@ -73,7 +74,7 @@ export function drawHud() {
   }
 }
 
-export function drawHudButton(rect, label, cost, enabled) {
+export function drawHudButton(rect: Rect, label: string, cost: number, enabled: boolean): void {
   ctx.fillStyle = enabled ? "#2f4a3a" : "#1d2329";
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
@@ -114,7 +115,7 @@ export function drawToolbar() {
   drawToolbarButton(buttons.load, "Cargar");
 }
 
-export function drawToolbarButton(rect, label, accent = undefined) {
+export function drawToolbarButton(rect: Rect, label: string, accent: string | undefined = undefined): void {
   ctx.fillStyle = "rgba(10, 16, 22, 0.82)";
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 

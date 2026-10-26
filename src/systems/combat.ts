@@ -5,9 +5,10 @@ import {
 } from "../core/constants";
 import { buildRoute, clampDestination } from "./navigation";
 import { playSound } from "./audio";
+import type { Point, SizeRect, Unit } from "../core/types";
 
 // Distancia desde el borde de la unidad hasta el borde del objetivo.
-export function distanceToTarget(unit, target) {
+export function distanceToTarget(unit: SizeRect, target: SizeRect): number {
   const ux = unit.x + unit.size / 2;
   const uy = unit.y + unit.size / 2;
   const tx = target.x + target.size / 2;
@@ -17,14 +18,14 @@ export function distanceToTarget(unit, target) {
 }
 
 // ¿Sigue existiendo el objetivo? (una unidad muerta sale del array)
-export function isAliveTarget(target) {
+export function isAliveTarget(target: any): boolean {
   if (!target || target.hp <= 0) return false;
   return units.includes(target) || buildings.includes(target);
 }
 
 // El enemigo vivo más cercano (unidad o edificio del otro equipo).
-export function findNearestOpponent(unit, maxDistance) {
-  let best = null;
+export function findNearestOpponent(unit: Unit, maxDistance: number): any {
+  let best: any = null;
   let bestDistance = maxDistance;
 
   for (const other of units) {
@@ -49,7 +50,7 @@ export function findNearestOpponent(unit, maxDistance) {
 }
 
 // Punto junto al objetivo al que la unidad se acerca para atacar.
-export function approachSpot(unit, target) {
+export function approachSpot(unit: Unit, target: SizeRect): Point {
   const ux = unit.x + unit.size / 2;
   const uy = unit.y + unit.size / 2;
   const tx = target.x + target.size / 2;
@@ -65,7 +66,7 @@ export function approachSpot(unit, target) {
 }
 
 // Da la orden de atacar a las unidades seleccionadas.
-export function orderAttack(selected, target) {
+export function orderAttack(selected: Unit[], target: any): void {
   for (const unit of selected) {
     unit.attackTarget = target;
     unit.gatherOrder = false;
@@ -79,7 +80,7 @@ export function orderAttack(selected, target) {
 }
 
 // Decide cada unidad: buscar objetivo, acercarse o golpear.
-export function updateCombat(unit, dt) {
+export function updateCombat(unit: Unit, dt: number): void {
   unit.cooldown = Math.max(0, unit.cooldown - dt);
 
   let target = unit.attackTarget;
@@ -148,7 +149,7 @@ export function updateCombat(unit, dt) {
 }
 
 // Quita vida y, si llega a cero, retira la unidad o el edificio.
-export function applyDamage(target, amount) {
+export function applyDamage(target: any, amount: number): void {
   if (!target || target.hp <= 0) return;
 
   target.hp -= amount;
@@ -188,7 +189,7 @@ export function applyDamage(target, amount) {
   }
 }
 
-export function removeUnit(unit) {
+export function removeUnit(unit: any): void {
   const index = units.indexOf(unit);
   if (index !== -1) units.splice(index, 1);
 
@@ -197,7 +198,7 @@ export function removeUnit(unit) {
   }
 }
 
-export function destroyCamp() {
+export function destroyCamp(): void {
   if (!camp.alive) return;
 
   camp.alive = false;

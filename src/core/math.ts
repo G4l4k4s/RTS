@@ -1,19 +1,26 @@
 // Utilidades geométricas puras, sin estado ni DOM.
+import type { Rect, SizeRect } from "./types";
 
 // ¿Se solapan dos rectángulos { x, y, w, h }?
-export function rectsOverlap(a, b) {
+export function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 // ¿El punto (x, y) está dentro del rectángulo?
-export function pointInRect(x, y, rect) {
+export function pointInRect(x: number, y: number, rect: Rect): boolean {
   return x > rect.x && x < rect.x + rect.w && y > rect.y && y < rect.y + rect.h;
 }
 
 // ¿El segmento que va de (x1,y1) a (x2,y2) atraviesa el rectángulo?
 // Se comprueba contra el rectángulo un poco encogido: así la ruta puede pasar
 // justo por el borde (las esquinas) pero no cruzar por dentro.
-export function segmentHitsRect(x1, y1, x2, y2, rect) {
+export function segmentHitsRect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  rect: Rect
+): boolean {
   const inner = {
     x: rect.x + 0.01,
     y: rect.y + 0.01,
@@ -54,7 +61,7 @@ export function segmentHitsRect(x1, y1, x2, y2, rect) {
 
 // Rectángulo del obstáculo "engordado": si el centro de la unidad pasa por
 // fuera de él, su cuerpo no roza el obstáculo.
-export function paddedRect(obstacle, unit) {
+export function paddedRect(obstacle: SizeRect, unit: { size: number }): Rect {
   const pad = unit.size / 2 + 2;
   return {
     x: obstacle.x - pad,
@@ -65,6 +72,6 @@ export function paddedRect(obstacle, unit) {
 }
 
 // Rectángulo que ocupa una unidad en el mundo.
-export function unitRect(unit) {
+export function unitRect(unit: SizeRect): Rect {
   return { x: unit.x, y: unit.y, w: unit.size, h: unit.size };
 }

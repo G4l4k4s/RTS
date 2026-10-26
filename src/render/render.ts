@@ -9,6 +9,7 @@ import {
   drawHud, drawWaveInfo, drawToolbar, drawToast, drawSelectionBox
 } from "../ui/hud";
 import { drawMinimap } from "./minimap";
+import type { Building } from "../core/types";
 
 // La cuadrícula se dibuja en coordenadas del mundo: la transformación del
 // render ya le aplica la cámara y el zoom.
@@ -108,7 +109,7 @@ export function drawBuildings() {
   }
 }
 
-export function drawDepot(building) {
+export function drawDepot(building: Building): void {
   ctx.fillStyle = "#3b4a5a";
   ctx.fillRect(building.x, building.y, building.size, building.size);
 
@@ -137,7 +138,7 @@ export function drawDepot(building) {
   drawBuildingHealth(building);
 }
 
-export function drawTower(building) {
+export function drawTower(building: Building): void {
   ctx.fillStyle = "#4b5563";
   ctx.fillRect(building.x, building.y, building.size, building.size);
 
@@ -160,7 +161,7 @@ export function drawTower(building) {
   drawBuildingHealth(building);
 }
 
-export function drawCamp(building) {
+export function drawCamp(building: Building): void {
   ctx.fillStyle = "#3f1d1d";
   ctx.fillRect(building.x, building.y, building.size, building.size);
 
@@ -178,7 +179,7 @@ export function drawCamp(building) {
   drawBuildingHealth(building);
 }
 
-export function drawBuildingHealth(building) {
+export function drawBuildingHealth(building: Building): void {
   if (building.hp >= building.maxHp) return;
 
   const x = building.x;

@@ -4,10 +4,11 @@ import {
   MIN_ZOOM, MAX_ZOOM, TILE_SIZE, world, FOG_TILE, FOG_COLS, FOG_ROWS, VISION_UNIT, VISION_BUILDING, MINIMAP_WIDTH, MINIMAP_HEIGHT, CAMERA_SPEED, EDGE_SCROLL_MARGIN, UNIT_SPEED, UNIT_SIZE, EFFECT_DURATION, GATHER_RATE, CARRY_CAPACITY, WOOD_PER_TREE, HUD_HEIGHT, BARRACKS_COST, BARRACKS_SIZE, BARRACKS_HP, TOWER_COST, TOWER_SIZE, TOWER_HP, TOWER_RANGE, TOWER_DAMAGE, TOWER_COOLDOWN, UNIT_COST, TRAIN_TIME, MAX_QUEUE, MAX_UNITS, BUILD_SNAP, TEAM_PLAYER, TEAM_ENEMY, UNIT_MAX_HP, UNIT_DAMAGE, UNIT_ATTACK_RANGE, UNIT_ATTACK_COOLDOWN, ENEMY_MAX_HP, ENEMY_DAMAGE, ENEMY_ATTACK_RANGE, ENEMY_ATTACK_COOLDOWN, ENEMY_AGGRO_RANGE, CAMP_HP, CAMP_SIZE, CAMP_SPAWN_INTERVAL, CAMP_MAX_GUARDS, CAMP_GUARD_RADIUS, WAVE_FIRST_DELAY, WAVE_INTERVAL, WAVE_MAX_LIVE, AUTOSAVE_KEY, SAVE_KEY, DIFFICULTIES, START_POSITIONS, UNIT_STATS, BUILD_SPECS, OBSTACLE_MARGIN
 } from "../core/constants";
 import { buildRoute } from "./navigation";
+import type { Building, Point, SizeRect, Unit } from "../core/types";
 
 // Huecos alrededor del árbol donde se colocan las unidades que talan:
 // ocho posiciones, en las cuatro caras y en las cuatro esquinas.
-export function gatherSlots(node) {
+export function gatherSlots(node: SizeRect): Point[] {
   const gap = node.size / 2 + UNIT_SIZE / 2 + 4;    // distancia del centro al centro
   const offsets = [
     { x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 },
@@ -21,7 +22,7 @@ export function gatherSlots(node) {
 }
 
 // Manda a las unidades a talar: cada una recibe el hueco libre más cercano.
-export function orderGather(selected) {
+export function orderGather(selected: Unit[]): void {
   const freeSlots = gatherSlots(tree);
 
   // Las unidades más cercanas eligen primero, para repartir mejor los huecos.
@@ -56,7 +57,7 @@ export function orderGather(selected) {
 }
 
 // Al llegar a la última parada de la ruta.
-export function handleArrival(unit) {
+export function handleArrival(unit: Unit): void {
   const task = unit.task;
   if (!task || task.type !== "gather") return;
 
@@ -76,8 +77,8 @@ export function handleArrival(unit) {
 }
 
 // Centro de mando más cercano donde entregar la madera.
-export function nearestDepot(unit) {
-  let best = null;
+export function nearestDepot(unit: Unit): Building | null {
+  let best: Building | null = null;
   let bestDistance = Infinity;
 
   for (const building of buildings) {
@@ -97,7 +98,7 @@ export function nearestDepot(unit) {
 }
 
 // Manda al trabajador a entregar lo que lleva.
-export function goDeposit(unit) {
+export function goDeposit(unit: Unit): void {
   unit.gathering = false;
 
   if (unit.carrying <= 0) {
@@ -122,7 +123,7 @@ export function goDeposit(unit) {
 }
 
 // Hueco alrededor del centro de mando más cercano a la unidad.
-export function depotSlot(depotBuilding, unit) {
+export function depotSlot(depotBuilding: SizeRect, unit: Unit): Point {
   const slots = gatherSlots(depotBuilding);
 
   let best = slots[0];
@@ -138,7 +139,7 @@ export function depotSlot(depotBuilding, unit) {
 }
 
 // Entrega la carga y, si el árbol sigue en pie, vuelve a por más.
-export function depositWood(unit) {
+export function depositWood(unit: Unit): void {
   stockpile.wood += unit.carrying;
   unit.carrying = 0;
   unit.gathering = false;
@@ -159,7 +160,7 @@ export function depositWood(unit) {
 }
 
 // Cuando el árbol se queda sin madera: pasa a ser un tocón y deja de estorbar.
-export function depleteTree() {
+export function depleteTree(): void {
   if (tree.depleted) return;
   tree.depleted = true;
   tree.wood = 0;

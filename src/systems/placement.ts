@@ -5,8 +5,9 @@ import {
 } from "../core/constants";
 import { rectsOverlap, unitRect } from "../core/math";
 import { canStand } from "./navigation";
+import type { Point, SizeRect } from "../core/types";
 
-export function findSpawnSpot(building) {
+export function findSpawnSpot(building: SizeRect): Point | null {
   const gap = building.size / 2 + UNIT_SIZE / 2 + 6;
   const offsets = [
     { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
@@ -28,7 +29,7 @@ export function findSpawnSpot(building) {
 }
 
 // ¿Cabe una unidad aquí, sin pisar obstáculos ni otras unidades?
-export function canPlaceUnit(x, y) {
+export function canPlaceUnit(x: number, y: number): boolean {
   if (!canStand({ size: UNIT_SIZE }, x, y)) return false;
 
   const box = { x, y, w: UNIT_SIZE, h: UNIT_SIZE };

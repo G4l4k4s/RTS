@@ -1,6 +1,6 @@
 # Mi primer RTS
 
-Un juego de estrategia en tiempo real hecho con **canvas puro, TypeScript y Vite**.
+Un juego de estrategia en tiempo real hecho con **canvas puro, TypeScript estricto y Vite**.
 La lógica está separada en módulos de `src/` (núcleo, entidades, sistemas, render y
 UI), y las pruebas se ejecutan con Node sobre un bundle generado con esbuild.
 
@@ -134,6 +134,7 @@ src/
   core/
     constants.ts        Constantes y presets de dificultad
     state.ts            Estado mutable central
+    types.ts            Tipos compartidos de unidades, edificios y estado
     math.ts             Geometría pura
     view.ts             Cámara y conversión pantalla ↔ mundo
     layout.ts           Rectángulos de botones

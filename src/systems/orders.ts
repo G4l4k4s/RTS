@@ -11,7 +11,7 @@ import { orderGather } from "./economy";
 
 // Reparte las unidades seleccionadas en una formación alrededor del punto
 // y les asigna su destino a cada una.
-export function issueMoveOrder(worldX, worldY, queue = false) {
+export function issueMoveOrder(worldX: number, worldY: number, queue = false): void {
   const selected = selectedUnits();
   if (selected.length === 0) return;
 

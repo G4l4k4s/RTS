@@ -3,9 +3,15 @@ import {
   TEAM_ENEMY, ENEMY_MAX_HP, ENEMY_DAMAGE, ENEMY_ATTACK_RANGE,
   ENEMY_ATTACK_COOLDOWN, UNIT_SPEED, UNIT_SIZE, UNIT_STATS
 } from "../core/constants";
+import type { Team, Unit, UnitType } from "../core/types";
 
 // Crea una unidad del equipo y tipo indicados.
-export function createUnit(x, y, team, type = "soldier") {
+export function createUnit(
+  x: number,
+  y: number,
+  team: Team,
+  type: UnitType = "soldier"
+): Unit {
   const stats =
     team === TEAM_ENEMY
       ? {

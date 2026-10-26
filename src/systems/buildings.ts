@@ -10,10 +10,11 @@ import { playSound } from "./audio";
 import { findSpawnSpot } from "./placement";
 import { createUnit } from "../entities/unit";
 import { findNearestOpponent, applyDamage } from "./combat";
+import type { BuildableType, Building, UnitType } from "../core/types";
 
 // ¿Cabe un edificio de este tamaño en esta posición? Sin salirse del mundo y
 // sin pisar obstáculos ni unidades.
-export function canPlaceBuilding(x, y, size) {
+export function canPlaceBuilding(x: number, y: number, size: number): boolean {
   if (x < 0 || y < 0 || x + size > world.width || y + size > world.height) {
     return false;
   }
@@ -36,7 +37,7 @@ export function canPlaceBuilding(x, y, size) {
 }
 
 // Entra en modo colocación del edificio indicado.
-export function startBuildMode(type = "barracks") {
+export function startBuildMode(type: BuildableType = "barracks"): void {
   const spec = BUILD_SPECS[type];
   if (!spec) return;
 
@@ -56,12 +57,12 @@ export function startBuildMode(type = "barracks") {
   updateBuildGhost(centerX, centerY);
 }
 
-export function cancelBuildMode() {
+export function cancelBuildMode(): void {
   buildMode.active = false;
 }
 
 // Coloca el fantasma del edificio en la rejilla más cercana al ratón.
-export function updateBuildGhost(worldX, worldY) {
+export function updateBuildGhost(worldX: number, worldY: number): void {
   const size = BUILD_SPECS[buildMode.type].size;
 
   buildMode.x = Math.round((worldX - size / 2) / BUILD_SNAP) * BUILD_SNAP;
@@ -70,7 +71,7 @@ export function updateBuildGhost(worldX, worldY) {
 }
 
 // Intenta construir donde está el fantasma. Si no cabe, no cobra nada.
-export function tryPlaceBuilding() {
+export function tryPlaceBuilding(): void {
   if (!buildMode.active || !buildMode.valid) return;
 
   const spec = BUILD_SPECS[buildMode.type];
@@ -101,11 +102,11 @@ export function tryPlaceBuilding() {
   state.selectedBuilding = building;
 }
 
-export function unitCost(type) {
+export function unitCost(type: UnitType): number {
   return UNIT_STATS[type] ? UNIT_STATS[type].cost : UNIT_COST;
 }
 
-export function canTrain(type = "soldier") {
+export function canTrain(type: UnitType = "soldier"): boolean {
   return Boolean(
     state.selectedBuilding &&
     state.selectedBuilding.type === "barracks" &&
@@ -116,14 +117,14 @@ export function canTrain(type = "soldier") {
   );
 }
 
-export function trainUnit(type = "soldier") {
+export function trainUnit(type: UnitType = "soldier"): void {
   if (!canTrain(type)) return;
   stockpile.wood -= unitCost(type);
   state.selectedBuilding.queue.push(type);
 }
 
 // Clic en la barra inferior: solo los botones hacen algo.
-export function handleHudClick(screenX, screenY) {
+export function handleHudClick(screenX: number, screenY: number): void {
   const buttons = hudButtons();
 
   if (state.selectedBuilding && state.selectedBuilding.type === "barracks") {
@@ -143,7 +144,7 @@ export function handleHudClick(screenX, screenY) {
 }
 
 // Avanza la cola de entrenamiento de cada cuartel del jugador.
-export function updateBuildings(dt) {
+export function updateBuildings(dt: number): void {
   for (const building of buildings) {
     if (building.type !== "barracks" || building.team !== TEAM_PLAYER) continue;
     if (!Array.isArray(building.queue) || building.queue.length === 0) continue;
@@ -164,7 +165,7 @@ export function updateBuildings(dt) {
 }
 
 // Busca un hueco libre alrededor del cuartel y saca ahí la unidad nueva.
-export function spawnUnit(building, type = "soldier") {
+export function spawnUnit(building: Building, type: UnitType = "soldier"): boolean {
   const spot = findSpawnSpot(building);
   if (!spot) return false;
 
@@ -173,7 +174,7 @@ export function spawnUnit(building, type = "soldier") {
 }
 
 // Las torres disparan solas al enemigo más cercano dentro de su alcance.
-export function updateTowers(dt) {
+export function updateTowers(dt: number): void {
   for (const building of buildings) {
     if (building.type !== "tower" || building.team !== TEAM_PLAYER) continue;
 

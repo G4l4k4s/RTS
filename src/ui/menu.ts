@@ -6,8 +6,14 @@ import {
 import { menuButtons } from "../core/layout";
 import { pointInRect } from "../core/math";
 import { hasAutosave, startNewGame, loadGame } from "../systems/session";
+import type { Rect } from "../core/types";
 
-export function drawMenuButton(rect, label, detail, enabled = true) {
+export function drawMenuButton(
+  rect: Rect,
+  label: string,
+  detail: string,
+  enabled = true
+): void {
   ctx.fillStyle = enabled ? "rgba(47, 74, 58, 0.9)" : "rgba(29, 35, 41, 0.9)";
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
@@ -26,7 +32,7 @@ export function drawMenuButton(rect, label, detail, enabled = true) {
   ctx.textAlign = "left";
 }
 
-export function drawMenu() {
+export function drawMenu(): void {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#0b1016";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -70,7 +76,7 @@ export function drawMenu() {
   ctx.textAlign = "left";
 }
 
-export function handleMenuClick(screenX, screenY) {
+export function handleMenuClick(screenX: number, screenY: number): void {
   const buttons = menuButtons();
 
   if (pointInRect(screenX, screenY, buttons.easy)) {
@@ -90,7 +96,7 @@ export function handleMenuClick(screenX, screenY) {
   }
 }
 
-export function drawPause() {
+export function drawPause(): void {
   if (!gameState.paused) return;
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
