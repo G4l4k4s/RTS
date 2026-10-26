@@ -1,11 +1,23 @@
 # Mi primer RTS
 
-Un juego de estrategia en tiempo real hecho con **canvas puro y JavaScript**, sin
-frameworks ni dependencias. Todo el juego vive en `main.js`.
+Un juego de estrategia en tiempo real hecho con **canvas puro, TypeScript y Vite**.
+La lógica está separada en módulos de `src/` (núcleo, entidades, sistemas, render y
+UI), y las pruebas se ejecutan con Node sobre un bundle generado con esbuild.
 
 ## Cómo jugar
 
-Abre `index.html` con doble clic (funciona con `file://`, no hace falta servidor).
+```bash
+npm install
+npm run dev
+```
+
+Abre la dirección que muestra Vite (normalmente `http://localhost:5173`). Para
+probar la versión de producción:
+
+```bash
+npm run build
+npm run preview
+```
 
 Al arrancar verás el **menú**: elige Fácil, Normal o Difícil. La dificultad cambia
 la madera inicial y el ritmo y tamaño de las oleadas. Si ya jugaste, **Continuar**
@@ -89,13 +101,17 @@ más grandes. Si te quedas sin unidades y sin edificios, pierdes.
   cámara, oleadas, dificultad y resultado). Los trabajadores que llevaban madera
   vuelven al centro de mando al cargar.
 
-## Pruebas
+## Pruebas y comprobaciones
 
 ```bash
-npm test
+npm test          # compila el bundle de pruebas y ejecuta todas las suites
+npm run typecheck # comprueba los tipos con tsc
+npm run build     # genera la versión de producción en dist/
 ```
 
-No hay dependencias: usa el `node` instalado.
+`npm test` usa `tests/build-test-bundle.js` para compilar `src/test-entry.ts` con
+esbuild. Ese entry arranca el juego y expone la API interna en `globalThis.__game`,
+igual que antes se hacía con el hook de `main.js`.
 
 - `tests/game.test.js`: 123 comprobaciones de selección, movimiento, rutas,
   recursos, edificios, combate, oleadas, niebla, minimapa, sonido, menú,
@@ -104,17 +120,48 @@ No hay dependencias: usa el `node` instalado.
 - `tests/fuzz-gather.js`: 25 rondas de tala con conservación exacta de madera.
 - `tests/fuzz-build.js`: 40 rondas con 1–4 cuarteles aleatorios.
 
-El arnés (`tests/harness.js`) carga `main.js` en un DOM falso con un canvas que
+El arnés (`tests/harness.js`) carga el bundle en un DOM falso con un canvas que
 registra las llamadas de dibujo, y permite simular ratón, teclado y rueda.
 
 ## Estructura
 
 ```
-index.html      Página del juego
-style.css       Estilo de la página
-main.js         Todo el juego
-package.json    Script de pruebas
-tests/          Arnés y suites de pruebas
+index.html              Página del juego
+style.css               Estilo de la página
+src/
+  main.ts               Arranque y bucle principal
+  test-entry.ts         Entry que expone el estado para las pruebas
+  core/
+    constants.ts        Constantes y presets de dificultad
+    state.ts            Estado mutable central
+    math.ts             Geometría pura
+    view.ts             Cámara y conversión pantalla ↔ mundo
+    layout.ts           Rectángulos de botones
+    feedback.ts         Avisos y efectos temporales
+  entities/
+    unit.ts             Creación de unidades
+  systems/
+    fog.ts              Niebla de guerra
+    selection.ts        Selección de unidades y edificios
+    navigation.ts       Rutas, colisiones y separación
+    orders.ts           Órdenes del jugador
+    economy.ts          Tala y entrega de madera
+    combat.ts           Combate y daño
+    placement.ts        Huecos libres para unidades
+    buildings.ts        Construcción, entrenamiento y torres
+    waves.ts            Guardias, oleadas y derrota
+    audio.ts            Sonido con WebAudio
+    session.ts          Guardado, carga, pausa y menú
+  render/
+    render.ts           Dibujo del mundo
+    minimap.ts          Minimapa interactivo
+  ui/
+    menu.ts             Menú y pantalla de pausa
+    hud.ts              HUD, avisos y caja de selección
+    input.ts            Eventos de teclado y ratón
+  game/
+    update.ts           Actualización de la simulación
+tests/                  Arnés, suites y build del bundle de pruebas
 ```
 
 ## Límites conocidos
