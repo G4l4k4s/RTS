@@ -1,11 +1,12 @@
-// Arnés compartido: carga main.js dentro de un DOM falso y devuelve el estado
-// del juego junto con las herramientas para simular eventos y leer el dibujo.
+// Arnés compartido: carga el bundle de src/main.ts dentro de un DOM falso y
+// devuelve el estado del juego junto con las herramientas para simular eventos
+// y leer el dibujo.
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
 function loadGame(options = {}) {
-  const mainPath = path.join(__dirname, "..", "main.js");
+  const mainPath = path.join(__dirname, ".build", "game.js");
   const code = fs.readFileSync(mainPath, "utf8");
 
   // Registro de llamadas de dibujo (para comprobar qué se pinta y dónde).
@@ -63,18 +64,8 @@ function loadGame(options = {}) {
   };
   sandbox.globalThis = sandbox;
 
-  // Se expone el estado interno para poder comprobarlo desde las pruebas.
-  const hook =
-    "\n;globalThis.__game = {" +
-    "units, camera, drag, effects, update, render, issueMoveOrder, clearSelection, selectedUnits," +
-    "keys, gameLoop, tree, world, stockpile, obstacles, mouse, screenToWorld, clampCamera," +
-    "buildings, buildMode, getSelectedBuilding: () => selectedBuilding, camp, gameState," +
-    "waveState, fog, updateFog, isVisibleAt, isExploredAt, minimapRect, minimapClick," +
-    "audio, createUnit, toast, saveGame, loadGame, canStand, startNewGame, menuButtons," +
-    "handleMenuClick, togglePause, goToMenu, hasAutosave, DIFFICULTIES, AUTOSAVE_KEY" +
-    "};";
-
-  vm.runInNewContext(code + hook, sandbox);
+  // El bundle ya expone el estado interno en globalThis.__game.
+  vm.runInNewContext(code, sandbox);
 
   const game = sandbox.__game;
 
